@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Quarterly refresh of Nifty 50 and Nifty Smallcap 250 watchlists.
+  Fires on the 1st of March, June, September, December at 07:00 IST
+  (which is when NSE has already published the latest constituent CSVs
+  after semi-annual rebalance windows). Safe to run more often — it is
+  a plain HTTP download.
+
+  After writing new files it will POST /watchlist/reload to the
+  running OrderUp instance so the change picks up without a restart.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.orderup.watchlist-refresh</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/pranavkestur/Projects/OrderUp/orderup-java</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-lc</string>
+        <string>./scripts/refresh-watchlists.sh &amp;&amp; curl -fsS -X POST http://localhost:8080/watchlist/reload || true</string>
+    </array>
+
+    <!-- Run on the 1st of Mar / Jun / Sep / Dec at 07:00 local time. -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Month</key><integer>3</integer><key>Day</key><integer>1</integer><key>Hour</key><integer>7</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Month</key><integer>6</integer><key>Day</key><integer>1</integer><key>Hour</key><integer>7</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Month</key><integer>9</integer><key>Day</key><integer>1</integer><key>Hour</key><integer>7</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Month</key><integer>12</integer><key>Day</key><integer>1</integer><key>Hour</key><integer>7</integer><key>Minute</key><integer>0</integer></dict>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>/Users/pranavkestur/Projects/OrderUp/orderup-java/logs/watchlist-refresh.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/pranavkestur/Projects/OrderUp/orderup-java/logs/watchlist-refresh.err.log</string>
+</dict>
+</plist>
+

@@ -1,0 +1,190 @@
+spring:
+  application:
+    name: orderup
+  datasource:
+    url: jdbc:h2:file:./data/orderup;AUTO_SERVER=TRUE
+    username: sa
+    password: ''
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+  h2:
+    console:
+      enabled: true
+      path: /h2
+
+server:
+  port: 8080
+
+kite:
+  api-key: ${KITE_API_KEY:}
+  api-secret: ${KITE_API_SECRET:}
+  # Set this exact URL as the "Redirect URL" in your Kite app settings
+  redirect-url: http://localhost:8080/kite/callback
+  user-id: ${KITE_USER_ID:}
+
+trading:
+  exchange: NSE
+  product: CNC          # equity delivery only
+  variety: regular
+  order-type: MARKET
+  scan-cron: "0 */5 9-15 * * MON-FRI"       # legacy DAILY_MULTI+HOURLY_MULTI: every 5 min IST (routed through candle cache)
+  wace-scan-cron: "0 */5 9-15 * * MON-FRI"  # WACE only: every 5 min IST — evaluates live partial bars via rolling candle cache
+  scheduler-zone: Asia/Kolkata
+  market-open: "09:15"
+  market-close: "15:30"
+  watchlist-files: []
+  # Uncomment to fall back to the curated Nifty 500 list:
+  #   - watchlist/nifty500.txt
+  extra-symbols: []
+  # When true, ignore watchlist-files and scan every NSE EQ symbol Kite returns
+  # (~10k symbols). Expect scan wall-clock and Kite historical API load to scale
+  # ~20x vs the Nifty 500 list. Cache warm-up on cold start will take ~65 min.
+  all-nse-eq: true
+
+  # Market-data plumbing: parallelism, rate-limit, retry, and cache snapshot.
+  market-data:
+    worker-threads: 10                     # size of the fetch/scan thread pool
+    rate-limit-per-sec: 8.0                # global cap across all workers (Kite historical ceiling)
+    max-retries: 1                         # additional attempts on fetch failure (0 = disable)
+    retry-backoff-ms: 1000                 # linear backoff between retries
+    cache-snapshot-path: data/candle-cache.snapshot   # atomic binary snapshot of the rolling window
+    snapshot-cron: "0 */30 * * * *"        # save every 30 min (+ on shutdown)
+  fallback-price-pct-band: 0.01
+  holidays:
+    - 2026-01-26
+    - 2026-03-06
+    - 2026-03-31
+    - 2026-04-03
+    - 2026-04-14
+    - 2026-05-01
+    - 2026-08-15
+    - 2026-10-02
+    - 2026-11-09
+    - 2026-12-25
+
+  # =========================================================================
+  #  Strategies — each is evaluated independently on its own timeframe.
+  #  If a symbol triggers on both on the same day, the first (hourly) wins;
+  #  the daily fire is suppressed for that symbol until the next trading day.
+  # =========================================================================
+  strategies:
+    hourly:
+      name:          HOURLY_MULTI
+      enabled:       true
+      quantity:      1
+      interval:      60minute
+      history-days:  60          # 60 calendar days easily covers CCI(200) on 1h
+      crossover:     true        # require indicators to cross the threshold on this bar
+      rsi-period:    8
+      rsi-buy-level: 60
+      rsi-sell-level: 40
+      cci-period:    200
+      cci-buy-level: 100
+      cci-sell-level: -100
+      wr-period:     140
+      wr-buy-level:  -20
+      wr-sell-level: -80
+      macd-fast:     12
+      macd-slow:     26
+      macd-signal:   9
+      adx-period:    14
+      adx-min:       20
+
+    daily:
+      name:          DAILY_MULTI
+      enabled:       true
+      quantity:      1
+      interval:      day
+      history-days:  400         # 400 calendar days = ~260 daily bars > CCI(200)
+      crossover:     false       # state check, not crossover
+      rsi-period:    14
+      rsi-buy-level: 60
+      rsi-sell-level: 40
+      cci-period:    200
+      cci-buy-level: 100
+      cci-sell-level: -100
+      wr-period:     140
+      wr-buy-level:  -20
+      wr-sell-level: -80
+      macd-fast:     12
+      macd-slow:     26
+      macd-signal:   9
+      adx-period:    14
+      adx-min:       20
+
+    # -----------------------------------------------------------------------
+    #  WACE — BUY-only qualification strategy.
+    #  Rules (all AND):
+    #    CCI(200) > 100
+    #    Williams %R(140) > -20
+    #    ADX(14) > 20  AND  +DI(14) > -DI(14)
+    #    Close > High[prev-high-lookback bars ago]
+    #    Volume > SMA(Volume, 20)
+    #    EMA(Close,10) crossed above EMA(Close,20) on this bar
+    #    EMA(Close,20) > EMA(Close,50)
+    #  WACE takes first preference in the scan; if it doesn't fire, the
+    #  existing DAILY_MULTI → HOURLY_MULTI flow runs as before.
+    # -----------------------------------------------------------------------
+    wace-hourly:
+      name:               WACE_HOURLY
+      enabled:            true
+      quantity:           1
+      interval:           60minute
+      history-days:       60
+      cci-period:         200
+      cci-buy-level:      100
+      wr-period:          140
+      wr-buy-level:       -20
+      adx-period:         14
+      adx-min:            20
+      ema-fast:           10
+      ema-mid:            20
+      ema-slow:           50
+      volume-sma-period:  20
+      prev-high-lookback: 1
+
+    wace-daily:
+      name:               WACE_DAILY
+      enabled:            true
+      quantity:           1
+      interval:           day
+      history-days:       400
+      cci-period:         200
+      cci-buy-level:      100
+      wr-period:          140
+      wr-buy-level:       -20
+      adx-period:         14
+      adx-min:            20
+      ema-fast:           10
+      ema-mid:            20
+      ema-slow:           50
+      volume-sma-period:  20
+      prev-high-lookback: 1
+
+notify:
+  telegram:
+    # Leave blank to disable. If both are set, notifications are automatically enabled.
+    bot-token: ${TELEGRAM_BOT_TOKEN:}
+    chat-id: ${TELEGRAM_CHAT_ID:}
+
+logging:
+  level:
+    com.orderup: DEBUG
+    com.zerodhatech: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} %-5level [%thread] %logger{20} - %msg%n"
+  file:
+    name: logs/orderup.log
+
+---
+spring:
+  config:
+    activate:
+      on-profile: paper
+# In 'paper' mode, OrderService logs would-be orders instead of sending them to Kite.
+trading:
+  paper-mode: true
+

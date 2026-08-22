@@ -1,0 +1,44 @@
+# Nifty Next 50 constituents — curated 2026-08-13
+# Source: NSE India / niftyindices.com — reviewed manually.
+# Same construction rule as midcap.txt (official Nifty index constituents),
+# with all overlaps against nifty50.txt and midcap.txt removed by design.
+# The list drifts with the semi-annual index review; re-check quarterly.
+ABB
+ADANIGREEN
+ADANIPOWER
+AMBUJACEM
+APLLTD
+ATGL
+BAJAJHLDNG
+BANKBARODA
+BERGEPAINT
+BRITANNIA
+CANBK
+DABUR
+DIVISLAB
+DLF
+DMART
+GAIL
+GICRE
+GODREJCP
+HAL
+HAVELLS
+HINDZINC
+HYUNDAI
+ICICIGI
+ICICIPRULI
+IOC
+IRFC
+LICI
+LODHA
+MOTHERSON
+NTPCGREEN
+PGHH
+PIDILITIND
+PNB
+POWERINDIA
+SIEMENS
+SWIGGY
+TATAPOWER
+WAAREEENER
+

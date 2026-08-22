@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.orderup.trading</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/pranavkestur/Projects/OrderUp/orderup-java</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-lc</string>
+        <string>exec "$JAVA_HOME/bin/java" -jar target/orderup-0.1.0.jar</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>JAVA_HOME</key><string>/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home</string>
+        <key>KITE_API_KEY</key><string>6b6dvo1tmh7ofz68</string>
+        <key>KITE_API_SECRET</key><string>67j4kpmob2akyco2k3pl5nl7ivmedhls</string>
+        <key>KITE_USER_ID</key><string></string>
+        <key>TELEGRAM_BOT_TOKEN</key><string>8838501098:AAFbdt2QkSat7X-7HtdgUpdPH_r7IdiFvTc</string>
+        <key>TELEGRAM_CHAT_ID</key><string>-5431538070</string>
+    </dict>
+
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/pranavkestur/Projects/OrderUp/orderup-java/logs/stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/pranavkestur/Projects/OrderUp/orderup-java/logs/stderr.log</string>
+</dict>
+</plist>
+

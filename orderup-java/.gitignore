@@ -1,0 +1,31 @@
+# Build output
+target/
+*/target/
+
+# Runtime state (per-app data & logs)
+data/
+logs/
+*.log
+*.log.*.gz
+
+# Local tools / caches
+.tools/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.classpath
+.project
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+*.env.local
+
