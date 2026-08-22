@@ -13,73 +13,36 @@
     </parent>
 
     <groupId>com.orderup</groupId>
-    <artifactId>orderup</artifactId>
+    <artifactId>orderup-parent</artifactId>
     <version>0.1.0</version>
-    <name>OrderUp</name>
-    <description>Automated trading bot for Zerodha Kite (CCI + Williams %R)</description>
+    <packaging>pom</packaging>
+    <name>OrderUp (parent)</name>
+    <description>Multi-module aggregator for OrderUp trading apps.</description>
+
+    <modules>
+        <module>orderup-common</module>
+        <module>orderup-app</module>
+    </modules>
 
     <properties>
         <java.version>21</java.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <kiteconnect.version>3.5.0</kiteconnect.version>
     </properties>
 
-    <dependencies>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-webflux</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-jpa</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-validation</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.h2database</groupId>
-            <artifactId>h2</artifactId>
-            <scope>runtime</scope>
-        </dependency>
-
-        <!-- Zerodha Kite Connect Java SDK -->
-        <dependency>
-            <groupId>com.zerodhatech.kiteconnect</groupId>
-            <artifactId>kiteconnect</artifactId>
-            <version>3.5.0</version>
-        </dependency>
-
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <optional>true</optional>
-        </dependency>
-
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-    </dependencies>
-
-    <build>
-        <plugins>
-            <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
-                <configuration>
-                    <excludes>
-                        <exclude>
-                            <groupId>org.projectlombok</groupId>
-                            <artifactId>lombok</artifactId>
-                        </exclude>
-                    </excludes>
-                </configuration>
-            </plugin>
-        </plugins>
-    </build>
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>com.orderup</groupId>
+                <artifactId>orderup-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.zerodhatech.kiteconnect</groupId>
+                <artifactId>kiteconnect</artifactId>
+                <version>${kiteconnect.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 </project>
 

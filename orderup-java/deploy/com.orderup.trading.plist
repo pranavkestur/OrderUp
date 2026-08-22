@@ -6,7 +6,7 @@
     <key>Label</key><string>com.orderup.trading</string>
 
     <key>WorkingDirectory</key>
-    <string>/Users/pranavkestur/Projects/OrderUp/orderup-java</string>
+    <string>/Users/pranavkestur/Projects/OrderUp/orderup-java/orderup-app</string>
 
     <key>ProgramArguments</key>
     <array>
