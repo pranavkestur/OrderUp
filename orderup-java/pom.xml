@@ -22,6 +22,7 @@
     <modules>
         <module>orderup-common</module>
         <module>orderup-app</module>
+        <module>orderup-chartink-app</module>
     </modules>
 
     <properties>

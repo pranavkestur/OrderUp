@@ -1,0 +1,81 @@
+spring:
+  application:
+    name: orderup-chartink
+  # Separate H2 database from the WACE app so switching alternates doesn't
+  # cross-contaminate audit logs / persisted runtime flags.
+  datasource:
+    url: jdbc:h2:file:./data/orderup;AUTO_SERVER=TRUE
+    username: sa
+    password: ''
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+  h2:
+    console:
+      enabled: true
+      path: /h2
+
+server:
+  # Same port as orderup-app: only one runs at a time (alternate launchd jobs).
+  port: 8080
+
+kite:
+  api-key: ${KITE_API_KEY:}
+  api-secret: ${KITE_API_SECRET:}
+  redirect-url: http://localhost:8080/kite/callback
+  user-id: ${KITE_USER_ID:}
+  # Shared token file — visit /kite/login on whichever app is running to
+  # populate this; the other app picks it up on next boot.
+  token-store: ../data/kite-token.json
+
+trading:
+  exchange: NSE
+  product:   CNC
+  variety:   regular
+  order-type: MARKET
+  scheduler-zone: Asia/Kolkata
+  market-open:  "09:15"
+  market-close: "15:30"
+  watchlist-files: []
+  extra-symbols: []
+  # We still need the InstrumentService to resolve symbol → token, so pull the
+  # full NSE EQ list on boot. The candle-cache subsystem stays disabled below.
+  all-nse-eq: true
+  fallback-price-pct-band: 0.01
+  holidays: []
+  market-data:
+    # Disables CandleCacheService/Snapshot/Warmer + HistoricalDataService +
+    # KiteRateLimiter + MarketDataExecutor. Chartink doesn't need candles;
+    # it just resolves symbols and places orders.
+    enabled: false
+
+chartink:
+  webhook-secret: ${CHARTINK_SECRET:}
+  default-quantity: 1
+
+notify:
+  telegram:
+    bot-token: ${TELEGRAM_BOT_TOKEN:}
+    chat-id:   ${TELEGRAM_CHAT_ID:}
+
+logging:
+  level:
+    com.orderup: DEBUG
+    com.zerodhatech: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} %-5level [%thread] %logger{20} - %msg%n"
+  file:
+    name: logs/orderup.log
+
+---
+spring:
+  config:
+    activate:
+      on-profile: paper
+trading:
+  paper-mode: true
+
+
+
