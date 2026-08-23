@@ -31,6 +31,19 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webflux</artifactId>
         </dependency>
+        <!--
+          Netty's native macOS DNS resolver. Without this, the reactive
+          WebClient falls back to a JDK resolver path that on Apple Silicon
+          hits "Connection reset" during TLS handshake to api.telegram.org
+          (and any other outbound HTTPS via Netty). Runtime-scoped, arch
+          classifier osx-aarch_64 (Apple M-series).
+        -->
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-resolver-dns-native-macos</artifactId>
+            <classifier>osx-aarch_64</classifier>
+            <scope>runtime</scope>
+        </dependency>
         <!-- Access-token + order-record + watchlist JPA entities -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
