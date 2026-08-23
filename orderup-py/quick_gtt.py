@@ -28,8 +28,8 @@ try:
     access_token = data['access_token']
     print(f'Access token: {access_token}')
 
-    # Save to .env
-    env_path = '/Users/pranavkestur/Projects/OrderUp/.env'
+    # Save to .env (co-located with this script)
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
     set_key(env_path, 'KITE_ACCESS_TOKEN', access_token)
     set_key(env_path, 'KITE_TOKEN_DATE', '2026-07-25')
     print('Token saved to .env')

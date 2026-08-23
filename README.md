@@ -1,155 +1,61 @@
-# OrderUp - Zerodha Kite Trading Bot
+# OrderUp
 
-An automated trading bot that places buy/sell orders on Zerodha based on technical indicator signals (CCI and Williams %R) on 5-minute timeframe charts.
+Automated trading tooling for Zerodha Kite. Monorepo with two independent
+modules; pick whichever is relevant to your task.
 
-## Trading Signals
+## Modules
 
-| Indicator | Condition | Action |
-|-----------|-----------|--------|
-| CCI | Crosses above +100 | SELL |
-| CCI | Crosses below -100 | BUY |
-| Williams %R | Crosses below -20 | SELL |
-| Williams %R | Crosses below -80 | BUY |
+### `orderup-java/` — Spring Boot 3 / Java 21 (production)
 
-## Prerequisites
+Multi-module Maven project. Three sub-modules:
 
-1. **Zerodha Kite Connect API** - You need a Kite Connect subscription
-   - Subscribe at: https://kite.trade/
-   - Get API credentials from: https://developers.kite.trade/
+| Module | Purpose |
+|---|---|
+| `orderup-common` | Shared library: Kite auth, market-data cache, indicators, orders, notifications, shared config. Not run standalone. |
+| `orderup-app` | WACE + legacy DAILY_MULTI/HOURLY_MULTI scanner. Cron-driven, scans the NSE EQ universe every 5 min during market hours. Boot main: `com.orderup.app.OrderUpApplication`. Artifact: `orderup-app/target/orderup-0.1.0.jar`. launchd label: `com.orderup.trading`. |
+| `orderup-chartink-app` | Receives Chartink alert webhooks and places orders via `orderup-common`. Boot main: `com.orderup.chartink.ChartinkApplication`. Artifact: `orderup-chartink-app/target/orderup-chartink-app-0.1.0.jar`. launchd label: `com.orderup.chartink`. |
 
-2. **Python 3.8+**
+Both apps listen on port 8080 and run as launchd alternates (only one at a
+time). They share a single daily Kite login via a file-based access-token
+store at `orderup-java/data/kite-token.json`.
 
-## Installation
-
-1. Clone or navigate to this project:
-```bash
-cd /Users/pranavkestur/Projects/OrderUp
-```
-
-2. Create a virtual environment (recommended):
-```bash
-python3 -m venv venv
-source venv/bin/activate
-```
-
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-4. Configure environment variables:
-```bash
-cp .env.example .env
-```
-
-5. Edit `.env` with your credentials:
-```
-KITE_API_KEY=your_api_key_here
-KITE_API_SECRET=your_api_secret_here
-KITE_ACCESS_TOKEN=your_access_token_here  # Will be generated on first run
-
-# Trading Configuration
-STOCK_SYMBOL=RELIANCE
-EXCHANGE=NSE
-QUANTITY=1
-```
-
-## Usage
-
-### Running the Bot
+Build:
 
 ```bash
-python trading_bot.py
+cd orderup-java && ./mvnw -q -DskipTests package
 ```
 
-On first run, the bot will:
-1. Generate a login URL
-2. Ask you to login via the URL
-3. Request the `request_token` from the redirect URL
-4. Generate and display the `access_token` to save
+See `orderup-java/README.md` for details.
 
-### Manual Testing
+### `orderup-py/` — original Python bot (legacy / experimentation)
 
-```python
-from trading_bot import KiteTradingBot
+Standalone Python scripts targeting the same Kite Connect API. Predates the
+Java rewrite and stays around for prototyping, ad-hoc GTT placement, and
+integration tests. Not run in production alongside the Java apps.
 
-# Initialize the bot
-bot = KiteTradingBot()
+See `orderup-py/README.md` for full setup / usage.
 
-# Get current indicator values
-indicators = bot.get_current_indicators()
-print(indicators)
-
-# Check signals and trade (if conditions met)
-result = bot.check_signals_and_trade()
-print(result)
-
-# Place orders manually
-bot.place_buy_order("RELIANCE", quantity=1, exchange="NSE")
-bot.place_sell_order("RELIANCE", quantity=1, exchange="NSE")
-```
-
-## File Structure
+## Repo layout
 
 ```
 OrderUp/
-├── requirements.txt     # Python dependencies
-├── .env.example         # Example environment configuration
-├── .env                 # Your actual configuration (create this)
-├── indicators.py        # CCI and Williams %R calculations
-├── trading_bot.py       # Main trading bot logic
-└── README.md            # This file
+├── README.md            ← this file
+├── orderup-java/        ← production Java trading apps
+│   ├── orderup-common/
+│   ├── orderup-app/
+│   ├── orderup-chartink-app/
+│   └── deploy/          ← launchd plists
+└── orderup-py/          ← legacy Python bot + scripts
+    ├── indicators.py
+    ├── orderup.py
+    ├── trading_bot.py
+    ├── requirements.txt
+    └── …
 ```
 
-## Indicator Calculations
+## Runtime state (git-ignored)
 
-### CCI (Commodity Channel Index)
-- **Period**: 20 candles
-- **Formula**: `CCI = (Typical Price - SMA) / (0.015 × Mean Deviation)`
-- **Typical Price**: `(High + Low + Close) / 3`
-
-### Williams %R
-- **Period**: 14 candles
-- **Formula**: `%R = ((Highest High - Close) / (Highest High - Lowest Low)) × -100`
-- **Range**: -100 to 0
-
-## Important Notes
-
-1. **Access Token Expiry**: Kite access tokens expire daily. You'll need to re-authenticate each trading day.
-
-2. **Market Hours**: The bot should only run during market hours (9:15 AM - 3:30 PM IST).
-
-3. **Risk Management**: This bot does not include stop-loss or position sizing. Add your own risk management logic.
-
-4. **Testing**: Test thoroughly in paper trading or with minimal quantities before using with real money.
-
-5. **API Limits**: Kite Connect has rate limits. The bot checks every 5 minutes to stay within limits.
-
-## Customization
-
-### Change Stock Symbol
-Edit `.env`:
-```
-STOCK_SYMBOL=INFY
-```
-
-### Change Indicator Periods
-Edit `trading_bot.py`:
-```python
-df['cci'] = calculate_cci(df, period=14)  # Change from 20 to 14
-df['williams_r'] = calculate_williams_r(df, period=10)  # Change from 14 to 10
-```
-
-### Use Intraday (MIS) Instead of Delivery (CNC)
-```python
-bot.place_buy_order("RELIANCE", quantity=1, product="MIS")
-```
-
-## Disclaimer
-
-**This software is for educational purposes only. Trading in financial markets involves risk. Always do your own research and never trade with money you cannot afford to lose. The author is not responsible for any financial losses incurred using this software.**
-
-## License
-
-MIT License
+`data/`, `logs/`, `target/`, `venv/`, `__pycache__/`, `*.log` are all ignored.
+Each launchd job's `WorkingDirectory` scopes its own `data/orderup.mv.db`
+and `logs/orderup.log` under its module directory.
 
