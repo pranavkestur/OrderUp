@@ -14,6 +14,8 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Map;
+import java.util.Objects;
 
 /**
  * Places orders at Kite, records them in the DB, and — when the operator has clicked
@@ -252,5 +254,134 @@ public class OrderService {
 
     private static double round(double v) {
         return Math.round(v * 20.0) / 20.0; // NSE tick 0.05
+    }
+
+    // ================== Chartink bracket-order support ==================
+
+    /**
+     * Per-signal metadata for the bracket-order flow. All fields optional; used
+     * by the dashboard for sector/industry roll-ups and by the audit trail.
+     */
+    public record SignalMeta(String alertName, String sector, String industry,
+                             String columnsJson) {
+        public static SignalMeta empty() { return new SignalMeta(null, null, null, null); }
+    }
+
+    /**
+     * Same as {@link #placeSignalOrder} but on a filled BUY also places an OCO
+     * (two-leg) GTT carrying a stop-loss and target leg. When either leg
+     * triggers, Kite auto-cancels the other. On any failure to place the OCO
+     * the BUY is left intact (already filled) and a Telegram warning is sent.
+     *
+     * @param meta      dashboard/audit metadata; may be {@link SignalMeta#empty()}
+     * @return {@code true} on any handled outcome (order sent, paper, dry, GTT
+     *         fallback). {@code false} only on a retryable failure of the BUY.
+     */
+    public boolean placeSignalOrderWithBracket(String symbol, String side, String indicator,
+                                               String reason, double lastPrice, int quantity,
+                                               SignalMeta meta) {
+        boolean primary = placeSignalOrder(symbol, side, indicator, reason, lastPrice, quantity);
+        if (!primary) return false;
+
+        // Only BUY legs get a bracket, and only if the risk-management block is
+        // configured and enabled. SELL / paper / dry / closed-market-GTT paths
+        // are all handled by placeSignalOrder itself and don't need brackets.
+        TradingProperties.RiskManagement rm = trading.riskManagement();
+        if (rm == null || !rm.enabled()) {
+            attachMeta(symbol, side, indicator, meta, null, null, null);
+            return true;
+        }
+        if (!"BUY".equalsIgnoreCase(side) || orderingDisabled || trading.paperMode()) {
+            attachMeta(symbol, side, indicator, meta, null, null, null);
+            return true;
+        }
+
+        double tgt = round(lastPrice * (1 + rm.targetPctOrDefault()));
+        double sl  = round(lastPrice * (1 - rm.stopLossPctOrDefault()));
+        Long ocoId = null;
+        try {
+            ocoId = placeOcoGtt(symbol, quantity, lastPrice, sl, tgt);
+            log.info("[OCO] {} — placed GTT id={} SL={} TGT={} (ref {})",
+                    symbol, ocoId, sl, tgt, lastPrice);
+            notifier.send("🎯 OCO for " + symbol + " — SL " + sl + " · TGT " + tgt
+                    + " (gttId " + ocoId + ")");
+        } catch (Throwable t) {
+            String msg = describe(t);
+            log.error("[OCO] {} — FAILED to place bracket: {}", symbol, msg);
+            notifier.send("⚠️ OCO FAILED for " + symbol + ": " + msg
+                    + " — position is unprotected, review manually.");
+        }
+        attachMeta(symbol, side, indicator, meta, ocoId, sl, tgt);
+        return true;
+    }
+
+    /**
+     * Place a Kite OCO ("two-leg") GTT with an SL leg (SELL LIMIT at {@code sl})
+     * and a TGT leg (SELL LIMIT at {@code tgt}). Kite validates that
+     * {@code sl < lastPrice < tgt} for a long position.
+     */
+    private Long placeOcoGtt(String symbol, int quantity,
+                             double lastPrice, double sl, double tgt) throws Throwable {
+        GTTParams gtt = new GTTParams();
+        gtt.triggerType = "two-leg";
+        gtt.tradingsymbol = symbol;
+        gtt.exchange = trading.exchange();
+        gtt.lastPrice = lastPrice;
+        gtt.triggerPrices = new ArrayList<>();
+        gtt.triggerPrices.add(sl);   // index 0 = SL leg
+        gtt.triggerPrices.add(tgt);  // index 1 = TGT leg
+
+        GTTOrderParams slLeg = gtt.new GTTOrderParams();
+        slLeg.transactionType = "SELL";
+        slLeg.quantity = quantity;
+        slLeg.orderType = "LIMIT";
+        slLeg.product = trading.product();
+        // Fire at SL trigger; use the same price as the limit so it fills as an
+        // effective stop-market within the NSE tick. Slightly less aggressive
+        // than a true STOP-MARKET but that's what Kite GTT gives us.
+        slLeg.price = sl;
+
+        GTTOrderParams tgtLeg = gtt.new GTTOrderParams();
+        tgtLeg.transactionType = "SELL";
+        tgtLeg.quantity = quantity;
+        tgtLeg.orderType = "LIMIT";
+        tgtLeg.product = trading.product();
+        tgtLeg.price = tgt;
+
+        gtt.orders = new ArrayList<>();
+        gtt.orders.add(slLeg);
+        gtt.orders.add(tgtLeg);
+
+        return (long) kite.placeGTT(gtt).id;
+    }
+
+    /**
+     * Locate the OrderRecord we just wrote (most recent by (symbol,side,indicator))
+     * and stamp bracket + metadata onto it. Runs post-persistence so we don't
+     * have to re-plumb the BUY flow to return the row.
+     */
+    private void attachMeta(String symbol, String side, String indicator, SignalMeta meta,
+                            Long ocoId, Double slPrice, Double tgtPrice) {
+        if (meta == null) meta = SignalMeta.empty();
+        try {
+            OrderRecord rec = repo.findAll().stream()
+                    .filter(o -> Objects.equals(o.getSymbol(), symbol))
+                    .filter(o -> Objects.equals(o.getSide(),   side))
+                    .filter(o -> Objects.equals(o.getIndicator(), indicator))
+                    .max(java.util.Comparator.comparing(OrderRecord::getPlacedAt))
+                    .orElse(null);
+            if (rec == null) return;
+            boolean dirty = false;
+            if (meta.alertName()   != null) { rec.setAlertName(meta.alertName()); dirty = true; }
+            if (meta.sector()      != null) { rec.setSector(meta.sector());       dirty = true; }
+            if (meta.industry()    != null) { rec.setIndustry(meta.industry());   dirty = true; }
+            if (meta.columnsJson() != null) { rec.setColumnsJson(meta.columnsJson()); dirty = true; }
+            if (ocoId    != null) { rec.setKiteOcoGttId(ocoId);    dirty = true; }
+            if (slPrice  != null) { rec.setStopLossPrice(slPrice); dirty = true; }
+            if (tgtPrice != null) { rec.setTargetPrice(tgtPrice);  dirty = true; }
+            if (dirty) repo.save(rec);
+        } catch (Throwable t) {
+            log.warn("Failed to attach signal meta to OrderRecord for {}: {}", symbol, t.getMessage());
+        }
     }
 }

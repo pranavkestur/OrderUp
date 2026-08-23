@@ -28,8 +28,28 @@ public record TradingProperties(
         List<LocalDate> holidays,
         boolean paperMode,
         Strategies strategies,
-        MarketDataConfig marketData
+        MarketDataConfig marketData,
+        RiskManagement riskManagement
 ) {
+    /**
+     * Bracket-order tunables. When {@code enabled} is true, every filled BUY
+     * placed via {@link com.orderup.orders.OrderService#placeSignalOrderWithBracket}
+     * is immediately followed by a Kite OCO (two-leg) GTT that carries both a
+     * stop-loss (SL) and target (TGT) leg. When one leg triggers, Kite
+     * automatically cancels the other.
+     *
+     * <p>Percentages are expressed as fractions ({@code 0.05 = 5%}) so config
+     * reads naturally: {@code target-pct: 0.05  stop-loss-pct: 0.02}.
+     */
+    public record RiskManagement(
+            boolean enabled,
+            double targetPct,
+            double stopLossPct
+    ) {
+        public double targetPctOrDefault()   { return targetPct   > 0 ? targetPct   : 0.05; }
+        public double stopLossPctOrDefault() { return stopLossPct > 0 ? stopLossPct : 0.02; }
+    }
+
     /**
      * Strategy parameter blocks. Kept in common (not the app module) because
      * {@link com.orderup.marketdata.CandleCacheWarmer} needs {@code waceDaily}

@@ -58,6 +58,11 @@ trading:
     cache-snapshot-path: data/candle-cache.snapshot   # atomic binary snapshot of the rolling window
     snapshot-cron: "0 */30 * * * *"        # save every 30 min (+ on shutdown)
   fallback-price-pct-band: 0.01
+  # Bracket orders are Chartink-only for now; WACE keeps discretionary exits.
+  risk-management:
+    enabled: false
+    target-pct: 0.05
+    stop-loss-pct: 0.02
   holidays:
     - 2026-01-26
     - 2026-03-06

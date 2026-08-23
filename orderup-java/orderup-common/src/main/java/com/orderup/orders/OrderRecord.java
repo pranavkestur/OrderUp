@@ -14,16 +14,44 @@ public class OrderRecord {
     private Instant placedAt;
     private String symbol;
     private String side;          // BUY / SELL
-    private String indicator;     // strategy name (HOURLY_MULTI / DAILY_MULTI / ...)
+    private String indicator;     // strategy name (HOURLY_MULTI / DAILY_MULTI / CHARTINK / ...)
     private String orderType;     // MARKET / GTT / PAPER
     private String kiteOrderId;   // regular order id
-    private Long   kiteGttId;     // GTT id (if applicable)
+    private Long   kiteGttId;     // GTT id (if applicable - closed-market fallback)
     private String reason;
 
     /** Persisted Kite fill data — synced from the orderbook so it survives across trading days. */
     private Integer filledQty;      // executed quantity (nullable = not yet synced)
     private Double  avgFillPrice;   // executed avg price (nullable)
     private String  status;         // COMPLETE / REJECTED / CANCELLED / OPEN / TRIGGER_PENDING / PAPER / GTT
+
+    // ------- Chartink / bracket-order metadata (added for the P&L dashboard) -------
+
+    /** Chartink alert display name that opened this position (BUY only). */
+    private String alertName;
+
+    /** Sector (from Chartink "sector" payload column), lowercased trimmed. Nullable. */
+    private String sector;
+
+    /** Industry (from Chartink "industry" payload column). Nullable. */
+    private String industry;
+
+    /**
+     * Full Chartink columns[] map for this symbol, serialized as JSON. Kept so the
+     * UI's row-drawer can render any custom columns the user later adds without a
+     * schema migration. Nullable.
+     */
+    @Column(columnDefinition = "TEXT")
+    private String columnsJson;
+
+    /** Kite OCO (two-leg) GTT id that carries this position's SL + TGT. Nullable. */
+    private Long kiteOcoGttId;
+
+    /** Configured SL price at time of BUY. Nullable. */
+    private Double stopLossPrice;
+
+    /** Configured TGT price at time of BUY. Nullable. */
+    private Double targetPrice;
 
     public OrderRecord() {}
 
@@ -51,9 +79,23 @@ public class OrderRecord {
     public Integer getFilledQty() { return filledQty; }
     public Double getAvgFillPrice() { return avgFillPrice; }
     public String getStatus() { return status; }
+    public String getAlertName() { return alertName; }
+    public String getSector() { return sector; }
+    public String getIndustry() { return industry; }
+    public String getColumnsJson() { return columnsJson; }
+    public Long getKiteOcoGttId() { return kiteOcoGttId; }
+    public Double getStopLossPrice() { return stopLossPrice; }
+    public Double getTargetPrice() { return targetPrice; }
 
     public void setFilledQty(Integer v) { this.filledQty = v; }
     public void setAvgFillPrice(Double v) { this.avgFillPrice = v; }
     public void setStatus(String v) { this.status = v; }
+    public void setAlertName(String v) { this.alertName = v; }
+    public void setSector(String v) { this.sector = v; }
+    public void setIndustry(String v) { this.industry = v; }
+    public void setColumnsJson(String v) { this.columnsJson = v; }
+    public void setKiteOcoGttId(Long v) { this.kiteOcoGttId = v; }
+    public void setStopLossPrice(Double v) { this.stopLossPrice = v; }
+    public void setTargetPrice(Double v) { this.targetPrice = v; }
 }
 

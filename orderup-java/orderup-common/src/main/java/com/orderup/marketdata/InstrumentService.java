@@ -53,6 +53,14 @@ public class InstrumentService {
      */
     @EventListener(ApplicationReadyEvent.class)
     public void refreshIfAuthenticated() {
+        // Nothing-to-do short-circuit for apps that don't need the instrument
+        // dump (e.g. orderup-chartink-app, which trusts Chartink's ticker and
+        // relies on Kite server-side symbol resolution for placeOrder/getLTP).
+        // Naturally opt-in for orderup-app because its allNseEq=true.
+        if (!trading.allNseEq() && watchlist.isEmpty()) {
+            log.info("Skipping instrument refresh — allNseEq=false and watchlist empty (nothing to resolve).");
+            return;
+        }
         KiteAuthService auth = authProvider.getIfAvailable();
         if (auth != null && auth.isAuthenticated()) {
             refreshInstruments();
