@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OrderUp · Chartink P&L</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg:#0f1420; --card:#181f2e; --card-2:#1e2740; --border:#2a3348;
+    --text:#e6ebf5; --dim:#8892a6; --muted:#5b6478;
+    --green:#3ddc84; --red:#ff5c7c; --blue:#5b9dff; --yellow:#f5c451; --purple:#c084fc;
+  }
+  * { box-sizing:border-box }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+         background:var(--bg); color:var(--text); font-size:14px }
+  a { color:var(--blue); text-decoration:none }
+  a:hover { text-decoration:underline }
+  code { font-family:"SF Mono",Menlo,Consolas,monospace; font-size:12px; background:rgba(255,255,255,.04);
+         padding:1px 5px; border-radius:3px }
+
+  header { padding:14px 24px; background:var(--card); border-bottom:1px solid var(--border);
+           display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px }
+  header h1 { font-size:20px; margin:0; display:flex; align-items:center; gap:10px }
+  header h1 small { color:var(--dim); font-size:12px; font-weight:400 }
+  .meta-strip { color:var(--dim); font-size:12px; margin-top:4px }
+  .meta-strip span { margin-right:14px }
+  .controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap }
+  .btn { background:var(--card-2); border:1px solid var(--border); color:var(--text);
+         padding:7px 12px; border-radius:6px; cursor:pointer; font-size:13px; font-weight:600 }
+  .btn:hover { border-color:var(--blue) }
+  .btn.danger { background:#7a1e2e; border-color:#7a1e2e; color:#fff }
+  .btn.success { background:#175d3a; border-color:#175d3a; color:#fff }
+  .badge { display:inline-flex; align-items:center; gap:5px; padding:3px 9px; border-radius:10px;
+           font-size:11px; font-weight:700; letter-spacing:.3px }
+  .badge.armed  { background:rgba(61,220,132,.15); color:var(--green); border:1px solid rgba(61,220,132,.4) }
+  .badge.warn   { background:rgba(245,196,81,.15); color:var(--yellow); border:1px solid rgba(245,196,81,.4) }
+  .badge.notready { background:rgba(255,92,124,.15); color:var(--red); border:1px solid rgba(255,92,124,.4) }
+  .badge.dry    { background:rgba(245,196,81,.15); color:var(--yellow); border:1px solid rgba(245,196,81,.4) }
+  .badge.live   { background:rgba(255,92,124,.15); color:var(--red); border:1px solid rgba(255,92,124,.4) }
+
+  main { padding:20px 24px; max-width:1600px; margin:0 auto }
+
+  /* Hero KPI strip */
+  .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:14px; margin-bottom:20px }
+  .kpi { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px }
+  .kpi .label { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.6px; font-weight:600 }
+  .kpi .value { font-size:26px; font-weight:700; margin-top:8px; font-variant-numeric:tabular-nums }
+  .kpi .sub   { color:var(--dim); font-size:12px; margin-top:6px }
+  .pos { color:var(--green) } .neg { color:var(--red) } .neutral { color:var(--yellow) }
+
+  /* Time-window strip */
+  .range-strip { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:20px }
+  .range-card { background:var(--card); border:1px solid var(--border); border-radius:8px;
+                padding:12px 14px; cursor:pointer; transition:border-color .15s }
+  .range-card:hover { border-color:var(--blue) }
+  .range-card.active { border-color:var(--blue); background:linear-gradient(180deg,var(--card-2),var(--card)) }
+  .range-card .rc-label { color:var(--dim); font-size:10px; text-transform:uppercase; font-weight:600; letter-spacing:.6px }
+  .range-card .rc-value { font-size:18px; font-weight:700; margin-top:5px; font-variant-numeric:tabular-nums }
+  .range-card .rc-sub   { font-size:12px; color:var(--dim); margin-top:2px }
+
+  /* Charts row */
+  .charts-grid { display:grid; grid-template-columns:2fr 1fr; gap:16px; margin-bottom:20px }
+  @media (max-width:1100px) { .charts-grid { grid-template-columns:1fr } }
+
+  .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px; margin-bottom:20px }
+  .card h3 { margin:0 0 12px 0; font-size:12px; color:var(--dim); text-transform:uppercase; letter-spacing:.6px; font-weight:600;
+             display:flex; align-items:center; justify-content:space-between }
+  .card h3 .h3-actions { font-size:11px; color:var(--muted); text-transform:none; letter-spacing:normal; font-weight:400 }
+  .chart-box { position:relative; height:280px }
+  .sector-list { display:flex; flex-direction:column; gap:6px; max-height:280px; overflow-y:auto }
+  .sector-row { display:grid; grid-template-columns:80px 1fr 90px; gap:8px; align-items:center; font-size:13px }
+  .sector-row.clickable { cursor:pointer; padding:4px; border-radius:4px }
+  .sector-row.clickable:hover { background:rgba(91,157,255,.08) }
+  .sector-bar { height:6px; background:var(--card-2); border-radius:3px; overflow:hidden }
+  .sector-bar > div { height:100%; }
+  .sector-pnl { text-align:right; font-variant-numeric:tabular-nums; font-weight:600; font-size:12px }
+  .sector-meta { color:var(--dim); font-size:10px }
+
+  /* Tables */
+  table { width:100%; border-collapse:collapse; font-size:13px }
+  th { color:var(--dim); font-weight:600; text-align:left; padding:9px 8px; border-bottom:1px solid var(--border);
+       font-size:10px; text-transform:uppercase; letter-spacing:.5px; position:sticky; top:0; background:var(--card); z-index:1 }
+  th.right, td.right { text-align:right; font-variant-numeric:tabular-nums }
+  td { padding:9px 8px; border-bottom:1px solid rgba(255,255,255,.04) }
+  tr:hover td { background:rgba(91,157,255,.04) }
+  tr:last-child td { border-bottom:none }
+  .row-symbol { font-weight:700; color:var(--text) }
+  .sector-pill { display:inline-block; font-size:10px; padding:2px 7px; border-radius:8px;
+                 background:rgba(192,132,252,.12); color:var(--purple); border:1px solid rgba(192,132,252,.3) }
+  .empty { color:var(--muted); text-align:center; padding:28px; font-style:italic }
+  .table-scroll { max-height:400px; overflow-y:auto; margin:0 -16px; padding:0 16px }
+
+  /* Table footer aggregate */
+  .table-footer { display:flex; gap:20px; padding:10px 8px 0; margin-top:8px; border-top:1px solid var(--border);
+                  color:var(--dim); font-size:12px; flex-wrap:wrap }
+  .table-footer strong { color:var(--text); font-variant-numeric:tabular-nums }
+
+  /* Filter chips */
+  .chips { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px }
+  .chip { padding:4px 10px; border-radius:12px; font-size:11px; background:var(--card-2); border:1px solid var(--border);
+          cursor:pointer; color:var(--dim); font-weight:600 }
+  .chip.active { background:var(--blue); color:#0a1020; border-color:var(--blue) }
+  .chip:hover:not(.active) { border-color:var(--blue) }
+
+  /* Alerts log (collapsible) */
+  details.card > summary { list-style:none; cursor:pointer; user-select:none }
+  details.card > summary::-webkit-details-marker { display:none }
+  details.card > summary::after { content:"▶"; float:right; color:var(--dim); transition:transform .15s }
+  details[open].card > summary::after { transform:rotate(90deg) }
+
+  /* Drawer */
+  .drawer-overlay { position:fixed; inset:0; background:rgba(0,0,0,.5); display:none; z-index:10 }
+  .drawer-overlay.open { display:block }
+  .drawer { position:fixed; top:0; right:-560px; width:540px; max-width:90vw; height:100vh; background:var(--card);
+            border-left:1px solid var(--border); z-index:11; transition:right .2s; overflow-y:auto; padding:20px }
+  .drawer.open { right:0 }
+  .drawer h3 { margin-top:0 }
+  .drawer .kv { display:grid; grid-template-columns:110px 1fr; gap:6px 12px; font-size:13px; margin-bottom:16px }
+  .drawer .kv .k { color:var(--dim) }
+  .drawer pre { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px;
+                font-size:11px; overflow-x:auto; white-space:pre-wrap; word-break:break-all }
+  .drawer .close-x { position:absolute; top:12px; right:16px; background:none; border:0; color:var(--dim);
+                     font-size:22px; cursor:pointer }
+
+  /* Toast */
+  #toast { position:fixed; bottom:20px; right:20px; padding:12px 18px; background:var(--card-2);
+           border:1px solid var(--border); border-radius:8px; font-size:13px; display:none; z-index:20 }
+  #toast.err { border-color:var(--red); color:var(--red) }
+  #toast.ok  { border-color:var(--green); color:var(--green) }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>OrderUp · Chartink <small id="userMeta"></small></h1>
+    <div class="meta-strip" id="metaStrip">Loading…</div>
+  </div>
+  <div class="controls">
+    <span id="armedBadge" class="badge notready">⛔ NOT READY</span>
+    <span id="modeBadge"  class="badge dry">🟠 DRY MODE</span>
+    <button class="btn success" id="enableBtn"  style="display:none">✅ Enable orders</button>
+    <button class="btn danger"  id="disableBtn" style="display:none">🚫 Disable orders</button>
+    <button class="btn" id="refreshBtn">↻ Refresh</button>
+  </div>
+</header>
+
+<main>
+  <!-- Hero KPIs -->
+  <div class="kpi-grid" id="kpiGrid">
+    <div class="kpi"><div class="label">Capital deployed</div><div class="value" id="kpi-deployed">—</div><div class="sub" id="kpi-deployed-sub">—</div></div>
+    <div class="kpi"><div class="label">Unrealized P&amp;L</div><div class="value" id="kpi-unrealized">—</div><div class="sub" id="kpi-unrealized-sub">—</div></div>
+    <div class="kpi"><div class="label">Realized P&amp;L</div><div class="value" id="kpi-realized">—</div><div class="sub" id="kpi-realized-sub">—</div></div>
+    <div class="kpi"><div class="label">Total ROI</div><div class="value" id="kpi-roi">—</div><div class="sub" id="kpi-roi-sub">—</div></div>
+  </div>
+
+  <!-- Time-window strip -->
+  <div class="range-strip" id="rangeStrip">
+    <div class="range-card" data-range="today"><div class="rc-label">Today</div><div class="rc-value" id="rw-today">—</div><div class="rc-sub" id="rw-today-sub">—</div></div>
+    <div class="range-card" data-range="week"><div class="rc-label">Week</div><div class="rc-value" id="rw-week">—</div><div class="rc-sub" id="rw-week-sub">—</div></div>
+    <div class="range-card active" data-range="month"><div class="rc-label">Month</div><div class="rc-value" id="rw-month">—</div><div class="rc-sub" id="rw-month-sub">—</div></div>
+    <div class="range-card" data-range="all"><div class="rc-label">All time</div><div class="rc-value" id="rw-all">—</div><div class="rc-sub" id="rw-all-sub">—</div></div>
+  </div>
+
+  <!-- Charts -->
+  <div class="charts-grid">
+    <div class="card">
+      <h3>Equity curve <span class="h3-actions" id="ec-range-label">last 30d · cumulative realized</span></h3>
+      <div class="chart-box">
+        <canvas id="equityChart"></canvas>
+        <div id="equityEmpty" class="empty" style="display:none;position:absolute;inset:0;
+             align-items:center;justify-content:center">
+          No closed trades in this range yet
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Sector performance <span class="h3-actions">realized P&amp;L</span></h3>
+      <div class="sector-list" id="sectorList"><div class="empty">Awaiting first closed trade</div></div>
+    </div>
+  </div>
+
+  <!-- Open positions -->
+  <div class="card">
+    <h3>Open positions <span class="h3-actions" id="opCount">0</span></h3>
+    <div class="table-scroll">
+      <table id="openTable">
+        <thead><tr>
+          <th>Symbol</th><th>Sector</th><th class="right">Qty</th><th class="right">Buy ₹</th>
+          <th class="right">LTP ₹</th><th class="right">SL ₹</th><th class="right">TGT ₹</th>
+          <th class="right">Unreal ₹</th><th class="right">Unreal %</th><th>Held</th><th>Opened by</th>
+        </tr></thead>
+        <tbody id="openBody"><tr><td colspan="11" class="empty">Awaiting first fire</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Closed trades -->
+  <div class="card">
+    <h3>Closed trades <span class="h3-actions"><span id="ct-range-label">last 30d</span> · <span id="ctCount">0</span> rows</span></h3>
+    <div class="chips" id="sectorChips"></div>
+    <div class="table-scroll">
+      <table id="closedTable">
+        <thead><tr>
+          <th>Entry</th><th>Exit</th><th>Symbol</th><th>Sector</th><th class="right">Qty</th>
+          <th class="right">Buy ₹</th><th class="right">Sell ₹</th><th class="right">P&amp;L ₹</th>
+          <th class="right">P&amp;L %</th><th class="right">Held</th>
+        </tr></thead>
+        <tbody id="closedBody"><tr><td colspan="10" class="empty">Awaiting first SELL — brackets fire automatically on ±SL/+TGT hit.</td></tr></tbody>
+      </table>
+    </div>
+    <div class="table-footer" id="closedFooter"></div>
+  </div>
+
+  <!-- Alerts log (collapsible) -->
+  <details class="card" id="alertsCard">
+    <summary><h3 style="display:inline">Chartink alerts log <span class="h3-actions">today's webhooks</span></h3></summary>
+    <div class="table-scroll" style="margin-top:12px">
+      <table>
+        <thead><tr>
+          <th>Time</th><th>Alert</th><th>Symbol</th><th>Side</th>
+          <th class="right">Qty</th><th>Result</th><th>Kite id</th>
+        </tr></thead>
+        <tbody id="alertsBody"><tr><td colspan="7" class="empty">No orders today yet</td></tr></tbody>
+      </table>
+    </div>
+  </details>
+</main>
+
+<!-- Row-drill drawer -->
+<div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
+<aside class="drawer" id="drawer">
+  <button class="close-x" onclick="closeDrawer()">×</button>
+  <div id="drawerContent"></div>
+</aside>
+
+<div id="toast"></div>
+
+<script>
+// ============================== state ==============================
+const state = {
+  range: 'month',
+  sectorFilter: null,
+  status: null,
+  kpis: null,
+  openPositions: [],
+  closedTrades: [],
+  sectorPerf: [],
+  equity: [],
+  orders: [],
+  ranges: {
+    today: null, week: null, month: null, all: null
+  }
+};
+let equityChart = null;
+
+// ============================== helpers ==============================
+const fmtRupee = n => (n == null || isNaN(n)) ? '—'
+  : '₹' + (n >= 0 ? '' : '−') + Math.abs(n).toLocaleString('en-IN', {maximumFractionDigits:0});
+const fmtRupee2 = n => (n == null || isNaN(n)) ? '—'
+  : '₹' + (n >= 0 ? '' : '−') + Math.abs(n).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+const fmtPct = n => (n == null || isNaN(n)) ? '—' : (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
+const signCls = n => n > 0 ? 'pos' : (n < 0 ? 'neg' : '');
+const fmtTime = iso => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleString('en-IN', {timeZone:'Asia/Kolkata',
+    day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', hour12:false});
+};
+const fmtHeld = hours => {
+  if (hours == null) return '—';
+  if (hours < 24) return hours + 'h';
+  const d = Math.floor(hours / 24), h = hours % 24;
+  return `${d}d ${h}h`;
+};
+
+function toast(msg, cls='') {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = cls;
+  t.style.display = 'block';
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.style.display = 'none', 3000);
+}
+
+async function j(url, opts={}) {
+  const r = await fetch(url, opts);
+  if (!r.ok) throw new Error(url + ' → ' + r.status);
+  return r.json();
+}
+
+// ============================== data loaders ==============================
+async function loadStatus() {
+  try {
+    state.status = await j('/control/status');
+    renderHeader();
+  } catch (e) { toast('status: ' + e.message, 'err'); }
+}
+
+async function loadRange(range) {
+  const kpis = await j('/api/pnl/kpis?range=' + range);
+  state.ranges[range] = kpis;
+}
+async function loadAllRanges() {
+  await Promise.all(['today','week','month','all'].map(loadRange));
+  renderRangeStrip();
+}
+
+async function loadActiveRangeData() {
+  const r = state.range;
+  const [kpis, open, closed, sectors, equity, orders] = await Promise.all([
+    j('/api/pnl/kpis?range=' + r),
+    j('/api/pnl/open-positions'),
+    j('/api/pnl/closed-trades?range=' + r + (state.sectorFilter ? '&sector=' + encodeURIComponent(state.sectorFilter) : '')),
+    j('/api/pnl/sector-performance?range=' + r),
+    j('/api/pnl/equity-curve?range=' + r),
+    j('/api/pnl/orders?range=today')
+  ]);
+  state.kpis = kpis;
+  state.openPositions = open;
+  state.closedTrades = closed;
+  state.sectorPerf = sectors;
+  state.equity = equity;
+  state.orders = orders;
+  renderKpis();
+  renderOpen();
+  renderClosed();
+  renderSectors();
+  renderEquity();
+  renderAlerts();
+}
+
+async function refreshAll() {
+  await loadStatus();
+  await loadAllRanges();
+  await loadActiveRangeData();
+  document.getElementById('metaStrip').innerHTML = renderMetaStrip();
+}
+
+// ============================== render: header/status ==============================
+function renderHeader() {
+  const s = state.status || {};
+  const armed = document.getElementById('armedBadge');
+  const mode  = document.getElementById('modeBadge');
+  const enable = document.getElementById('enableBtn');
+  const disable = document.getElementById('disableBtn');
+
+  if (s.ready) { armed.className = 'badge armed'; armed.textContent = '🟢 ARMED'; }
+  else if (!s.kiteAuthenticated) { armed.className = 'badge notready'; armed.textContent = '⛔ NOT AUTHED'; }
+  else if (s.ordersDisabled) { armed.className = 'badge warn'; armed.textContent = '🟡 ORDERS OFF'; }
+  else { armed.className = 'badge notready'; armed.textContent = '⛔ NOT READY'; }
+
+  if (s.ordersDisabled) {
+    mode.className = 'badge dry'; mode.textContent = '🟠 DRY MODE';
+    enable.style.display = 'inline-block'; disable.style.display = 'none';
+  } else {
+    mode.className = 'badge live'; mode.textContent = '🔴 REAL MONEY';
+    enable.style.display = 'none'; disable.style.display = 'inline-block';
+  }
+  document.getElementById('userMeta').textContent = 'P&L dashboard';
+}
+
+function renderMetaStrip() {
+  const s = state.status || {};
+  const now = new Date().toLocaleTimeString('en-IN', {timeZone:'Asia/Kolkata', hour12:false});
+  return `<span>auth: <strong>${s.kiteAuthenticated ? '✓' : '✗'}</strong></span>` +
+         `<span>orders: <strong>${s.ordersDisabled ? 'DISABLED' : 'ENABLED'}</strong></span>` +
+         `<span>updated: <strong>${now} IST</strong></span>`;
+}
+
+// ============================== render: KPIs ==============================
+function renderKpis() {
+  const k = state.kpis; if (!k) return;
+  document.getElementById('kpi-deployed').textContent = fmtRupee(k.capitalDeployed);
+  document.getElementById('kpi-deployed-sub').textContent = `${k.openPositionsCount} open · ${k.uniqueSymbolsCount} symbols traded`;
+
+  const up = document.getElementById('kpi-unrealized');
+  up.textContent = fmtRupee(k.unrealizedPnl); up.className = 'value ' + signCls(k.unrealizedPnl);
+  document.getElementById('kpi-unrealized-sub').innerHTML =
+    `<span class="${signCls(k.unrealizedRoiPct)}">${fmtPct(k.unrealizedRoiPct)}</span> · marked-to-market`;
+
+  const rp = document.getElementById('kpi-realized');
+  rp.textContent = fmtRupee(k.realizedPnl); rp.className = 'value ' + signCls(k.realizedPnl);
+  document.getElementById('kpi-realized-sub').textContent =
+    `${k.winning}W / ${k.losing}L · win rate ${(k.winRatePct||0).toFixed(0)}% · ${k.tradesCount} trades`;
+
+  const roi = document.getElementById('kpi-roi');
+  roi.textContent = fmtPct(k.totalRoiPct); roi.className = 'value ' + signCls(k.totalRoiPct);
+  document.getElementById('kpi-roi-sub').innerHTML =
+    `Sharpe ${(k.sharpe||0).toFixed(2)} · Max DD <span class="neg">${(k.maxDrawdownPct||0).toFixed(1)}%</span>`;
+}
+
+function renderRangeStrip() {
+  ['today','week','month','all'].forEach(r => {
+    const k = state.ranges[r]; if (!k) return;
+    const total = (k.realizedPnl || 0) + (k.unrealizedPnl || 0);
+    document.getElementById('rw-' + r).innerHTML =
+      `<span class="${signCls(total)}">${fmtRupee(total)}</span>`;
+    document.getElementById('rw-' + r + '-sub').innerHTML =
+      `<span class="${signCls(k.totalRoiPct)}">${fmtPct(k.totalRoiPct)}</span>`;
+  });
+}
+
+// ============================== render: equity curve ==============================
+function renderEquity() {
+  const points = state.equity || [];
+  let cum = 0;
+  const labels = [], data = [];
+  for (const p of points) { cum += p.pnl; labels.push(p.date); data.push(cum); }
+  const rangeText = { today:'today', week:'last 7d', month:'last 30d', all:'all time' }[state.range];
+  document.getElementById('ec-range-label').textContent = rangeText + ' · cumulative realized';
+
+  const canvas = document.getElementById('equityChart');
+  const emptyEl = document.getElementById('equityEmpty');
+
+  // Empty-state: hide canvas, show placeholder, destroy any prior chart. Idempotent.
+  if (data.length === 0) {
+    canvas.style.display = 'none';
+    emptyEl.style.display = 'flex';
+    if (equityChart) { equityChart.destroy(); equityChart = null; }
+    return;
+  }
+  canvas.style.display = 'block';
+  emptyEl.style.display = 'none';
+
+  const ctx = canvas.getContext('2d');
+  if (equityChart) equityChart.destroy();
+  equityChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        data,
+        borderColor: cum >= 0 ? '#3ddc84' : '#ff5c7c',
+        backgroundColor: cum >= 0 ? 'rgba(61,220,132,0.15)' : 'rgba(255,92,124,0.15)',
+        fill: true, tension: 0.25, borderWidth: 2, pointRadius: 0,
+        pointHoverRadius: 4, pointHoverBackgroundColor: '#5b9dff'
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => 'Cumulative: ' + fmtRupee2(c.parsed.y) } }
+      },
+      scales: {
+        x: { ticks: { color:'#8892a6', maxRotation:0, autoSkip:true, maxTicksLimit:7 }, grid: { color:'rgba(255,255,255,0.03)' } },
+        y: { ticks: { color:'#8892a6', callback: v => fmtRupee(v) }, grid: { color:'rgba(255,255,255,0.05)' } }
+      }
+    }
+  });
+}
+
+// ============================== render: sector list ==============================
+function renderSectors() {
+  const sectors = state.sectorPerf || [];
+  const box = document.getElementById('sectorList');
+  if (sectors.length === 0) {
+    box.innerHTML = '<div class="empty">No sector data yet</div>';
+    return;
+  }
+  const maxAbs = Math.max(...sectors.map(s => Math.abs(s.realizedPnl)), 1);
+  box.innerHTML = sectors.map(s => {
+    const w = Math.abs(s.realizedPnl) / maxAbs * 100;
+    const col = s.realizedPnl >= 0 ? '#3ddc84' : '#ff5c7c';
+    const active = state.sectorFilter === s.sector ? ' style="background:rgba(91,157,255,.08)"' : '';
+    return `<div class="sector-row clickable" onclick="filterBySector('${s.sector.replace(/'/g,"\\'")}')"${active}>
+      <div>${s.sector}</div>
+      <div>
+        <div class="sector-bar"><div style="width:${w}%;background:${col}"></div></div>
+        <div class="sector-meta">${s.trades} trades · ${s.wins}W/${s.losses}L</div>
+      </div>
+      <div class="sector-pnl ${signCls(s.realizedPnl)}">${fmtRupee(s.realizedPnl)}</div>
+    </div>`;
+  }).join('');
+}
+
+function filterBySector(sector) {
+  state.sectorFilter = (state.sectorFilter === sector) ? null : sector;
+  loadActiveRangeData();
+  renderChips();
+}
+
+// ============================== render: open positions ==============================
+function renderOpen() {
+  const rows = state.openPositions || [];
+  document.getElementById('opCount').textContent = rows.length + ' position' + (rows.length===1?'':'s');
+  const body = document.getElementById('openBody');
+  if (rows.length === 0) {
+    body.innerHTML = '<tr><td colspan="11" class="empty">No open positions</td></tr>';
+    return;
+  }
+  rows.sort((a, b) => b.unrealizedPnl - a.unrealizedPnl);
+  body.innerHTML = rows.map((p, idx) => {
+    const held = p.openedAt ? Math.round((Date.now() - new Date(p.openedAt).getTime())/3600000) : null;
+    const sectorCell = p.sector
+      ? `<span class="sector-pill">${p.sector}</span>`
+      : `<span style="color:var(--muted)">—</span>`;
+    const slCell  = p.stopLossPrice != null ? p.stopLossPrice.toFixed(2) : '—';
+    const tgtCell = p.targetPrice   != null ? p.targetPrice.toFixed(2)   : '—';
+    return `<tr onclick='openPosDrawer(${idx})' style="cursor:pointer">
+      <td class="row-symbol">${p.symbol}</td>
+      <td>${sectorCell}</td>
+      <td class="right">${p.quantity}</td>
+      <td class="right">${p.buyPrice.toFixed(2)}</td>
+      <td class="right">${p.ltp ? p.ltp.toFixed(2) : '—'}</td>
+      <td class="right neg">${slCell}</td>
+      <td class="right pos">${tgtCell}</td>
+      <td class="right ${signCls(p.unrealizedPnl)}">${fmtRupee(p.unrealizedPnl)}</td>
+      <td class="right ${signCls(p.pnlPct)}">${fmtPct(p.pnlPct)}</td>
+      <td>${held != null ? fmtHeld(held) : '—'}</td>
+      <td style="color:var(--dim);font-size:12px">${p.alertName || '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+function openPosDrawer(idx) {
+  const p = state.openPositions[idx];
+  if (!p) return;
+  const c = document.getElementById('drawerContent');
+  const slPct  = (p.stopLossPrice != null && p.buyPrice > 0) ? ((p.stopLossPrice - p.buyPrice) / p.buyPrice * 100).toFixed(2) + '%' : '—';
+  const tgtPct = (p.targetPrice   != null && p.buyPrice > 0) ? ((p.targetPrice   - p.buyPrice) / p.buyPrice * 100).toFixed(2) + '%' : '—';
+  c.innerHTML = `
+    <h3>${p.symbol} · open position</h3>
+    <div class="kv">
+      <div class="k">Strategy</div>       <div>${p.strategy}</div>
+      <div class="k">Sector</div>         <div>${p.sector    || '—'}</div>
+      <div class="k">Industry</div>       <div>${p.industry  || '—'}</div>
+      <div class="k">Alert</div>          <div>${p.alertName || '—'}</div>
+      <div class="k">Quantity</div>       <div>${p.quantity}</div>
+      <div class="k">Buy price</div>      <div>${p.buyPrice.toFixed(2)}</div>
+      <div class="k">LTP</div>            <div>${p.ltp ? p.ltp.toFixed(2) : '—'}</div>
+      <div class="k">Stop-loss</div>      <div class="neg">${p.stopLossPrice != null ? p.stopLossPrice.toFixed(2) + ' (' + slPct + ')' : '—'}</div>
+      <div class="k">Target</div>         <div class="pos">${p.targetPrice   != null ? p.targetPrice.toFixed(2)   + ' (' + tgtPct + ')' : '—'}</div>
+      <div class="k">Unrealized</div>     <div class="${signCls(p.unrealizedPnl)}">${fmtRupee2(p.unrealizedPnl)} (${fmtPct(p.pnlPct)})</div>
+      <div class="k">Opened</div>         <div>${p.openedAt ? fmtTime(p.openedAt) : '—'}</div>
+      <div class="k">Kite BUY id</div>    <div>${p.kiteOrderId  ? '<a href="https://kite.zerodha.com/orders" target="_blank">'+p.kiteOrderId +'</a>' : '—'}</div>
+      <div class="k">OCO GTT id</div>     <div>${p.kiteOcoGttId ? '<a href="https://kite.zerodha.com/gtt" target="_blank">'+p.kiteOcoGttId+'</a>' : '—'}</div>
+    </div>
+    <h3>Latest webhook (debug)</h3>
+    <pre id="drawerRawWebhook">loading…</pre>
+  `;
+  document.getElementById('drawer').classList.add('open');
+  document.getElementById('drawerOverlay').classList.add('open');
+  fetch('/chartink/last-received').then(r => r.json()).then(x => {
+    document.getElementById('drawerRawWebhook').textContent = JSON.stringify(x, null, 2);
+  }).catch(() => { document.getElementById('drawerRawWebhook').textContent = '(none)'; });
+}
+function closeDrawer() {
+  document.getElementById('drawer').classList.remove('open');
+  document.getElementById('drawerOverlay').classList.remove('open');
+}
+
+// ============================== render: closed trades ==============================
+function renderClosed() {
+  const rows = state.closedTrades || [];
+  document.getElementById('ctCount').textContent = rows.length;
+  const rangeText = { today:'today', week:'last 7d', month:'last 30d', all:'all time' }[state.range];
+  document.getElementById('ct-range-label').textContent = rangeText;
+  const body = document.getElementById('closedBody');
+  if (rows.length === 0) {
+    body.innerHTML = '<tr><td colspan="10" class="empty">Awaiting first SELL — brackets fire automatically on SL / TGT hit.</td></tr>';
+    document.getElementById('closedFooter').innerHTML = '';
+    return;
+  }
+  body.innerHTML = rows.map(t => `<tr>
+    <td>${fmtTime(t.entryAt)}</td>
+    <td>${fmtTime(t.exitAt)}</td>
+    <td class="row-symbol">${t.symbol}</td>
+    <td>${t.sector ? '<span class="sector-pill">'+t.sector+'</span>' : '<span style="color:var(--muted)">—</span>'}</td>
+    <td class="right">${t.quantity}</td>
+    <td class="right">${t.entryPx.toFixed(2)}</td>
+    <td class="right">${t.exitPx.toFixed(2)}</td>
+    <td class="right ${signCls(t.pnl)}">${fmtRupee2(t.pnl)}</td>
+    <td class="right ${signCls(t.pnlPct)}">${fmtPct(t.pnlPct)}</td>
+    <td class="right">${fmtHeld(t.holdingHours)}</td>
+  </tr>`).join('');
+
+  const total = rows.reduce((a,t) => a + t.pnl, 0);
+  const wins  = rows.filter(t => t.pnl > 0).length;
+  const losses= rows.filter(t => t.pnl < 0).length;
+  const winRate = rows.length ? (wins * 100 / rows.length).toFixed(0) : 0;
+  const avgHold = Math.round(rows.reduce((a,t) => a + t.holdingHours, 0) / rows.length);
+  const best  = Math.max(...rows.map(t => t.pnlPct));
+  const worst = Math.min(...rows.map(t => t.pnlPct));
+  document.getElementById('closedFooter').innerHTML = `
+    <div>Total: <strong class="${signCls(total)}">${fmtRupee2(total)}</strong></div>
+    <div>Avg hold: <strong>${fmtHeld(avgHold)}</strong></div>
+    <div>Win rate: <strong>${winRate}%</strong> (${wins}W / ${losses}L)</div>
+    <div>Best: <strong class="pos">${fmtPct(best)}</strong></div>
+    <div>Worst: <strong class="neg">${fmtPct(worst)}</strong></div>
+  `;
+  renderChips();
+}
+
+function renderChips() {
+  const sectors = state.sectorPerf.map(s => s.sector);
+  const chips = document.getElementById('sectorChips');
+  chips.innerHTML =
+    `<span class="chip ${!state.sectorFilter ? 'active' : ''}" onclick="clearSectorFilter()">All sectors</span>` +
+    sectors.map(s => `<span class="chip ${state.sectorFilter===s?'active':''}" onclick="filterBySector('${s.replace(/'/g,"\\'")}')">${s}</span>`).join('');
+}
+function clearSectorFilter() { state.sectorFilter = null; loadActiveRangeData(); }
+
+// ============================== render: alerts / orders log ==============================
+function renderAlerts() {
+  const rows = state.orders || [];
+  const body = document.getElementById('alertsBody');
+  if (rows.length === 0) {
+    body.innerHTML = '<tr><td colspan="7" class="empty">No orders today yet</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(o => {
+    const alertName = o.alertName
+      || (o.reason||'').match(/Chartink alert '([^']+)'/)?.[1]
+      || '—';
+    return `<tr>
+      <td>${fmtTime(o.placedAt)}</td>
+      <td style="font-size:12px;color:var(--dim)">${alertName}</td>
+      <td class="row-symbol">${o.symbol}</td>
+      <td class="side-${o.side}" style="color:${o.side==='BUY'?'var(--green)':'var(--red)'};font-weight:600">${o.side}</td>
+      <td class="right">${o.filledQty || '—'}</td>
+      <td>${o.status || '—'}</td>
+      <td style="font-size:11px;color:var(--dim)">${o.kiteOrderId || '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ============================== controls ==============================
+document.getElementById('enableBtn').onclick = async () => {
+  try {
+    state.status = await j('/control/orders/enable', {method:'POST'});
+    renderHeader();
+    toast('Orders enabled — real money mode', 'ok');
+  } catch (e) { toast('enable failed: ' + e.message, 'err'); }
+};
+document.getElementById('disableBtn').onclick = async () => {
+  if (!confirm('Disable order placement? Existing brackets remain active.')) return;
+  try {
+    state.status = await j('/control/orders/disable', {method:'POST'});
+    renderHeader();
+    toast('Orders disabled — dry mode', 'ok');
+  } catch (e) { toast('disable failed: ' + e.message, 'err'); }
+};
+document.getElementById('refreshBtn').onclick = () => refreshAll();
+document.querySelectorAll('#rangeStrip .range-card').forEach(el => {
+  el.onclick = () => {
+    document.querySelectorAll('#rangeStrip .range-card').forEach(x => x.classList.remove('active'));
+    el.classList.add('active');
+    state.range = el.dataset.range;
+    state.sectorFilter = null;
+    loadActiveRangeData();
+  };
+});
+
+// ============================== boot + poll ==============================
+refreshAll();
+setInterval(() => {
+  if (document.visibilityState === 'visible') refreshAll();
+}, 10000);
+</script>
+</body>
+</html>
+

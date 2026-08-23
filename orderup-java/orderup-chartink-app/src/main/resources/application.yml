@@ -40,9 +40,9 @@ trading:
   market-close: "15:30"
   watchlist-files: []
   extra-symbols: []
-  # We still need the InstrumentService to resolve symbol → token, so pull the
-  # full NSE EQ list on boot. The candle-cache subsystem stays disabled below.
-  all-nse-eq: true
+  # Chartink pushes the ticker; we let Kite resolve it server-side on
+  # placeOrder / getLTP. No local NSE EQ instrument dump needed.
+  all-nse-eq: false
   fallback-price-pct-band: 0.01
   holidays: []
   market-data:
@@ -50,6 +50,12 @@ trading:
     # KiteRateLimiter + MarketDataExecutor. Chartink doesn't need candles;
     # it just resolves symbols and places orders.
     enabled: false
+  # Bracket-order tunables — on every filled BUY, an OCO GTT is placed with a
+  # target (+5%) and stop-loss (-2%) leg. Disable by setting enabled: false.
+  risk-management:
+    enabled: true
+    target-pct: 0.05
+    stop-loss-pct: 0.02
 
 chartink:
   webhook-secret: ${CHARTINK_SECRET:}

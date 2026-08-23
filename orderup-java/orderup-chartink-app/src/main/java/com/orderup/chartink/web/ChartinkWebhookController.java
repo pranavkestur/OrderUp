@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
@@ -113,13 +114,29 @@ public class ChartinkWebhookController {
         log.info("[CHARTINK] scan='{}' alert='{}' triggered_at='{}' symbols={} contentType='{}'",
                 payload.scan_name, alertName, payload.triggered_at, symbols.length, contentType);
 
+        // Chartink "Test webhook" button — payload is a canned {SYMBOL 1, SYMBOL 2, SYMBOL 3}
+        // with prices {100, 200, 300}. Real NSE EQ tickers never contain whitespace, so this
+        // is a safe, zero-false-positive sniff. Short-circuit to avoid firing "unknown symbol"
+        // Telegram spam and polluting the per-day de-dup set with junk.
+        if (isChartinkTestPayload(symbols)) {
+            log.info("[CHARTINK] Detected test-webhook payload (SYMBOL 1/2/3…) — acknowledging without firing.");
+            Map<String, Object> testOut = new LinkedHashMap<>();
+            testOut.put("received", symbols.length);
+            testOut.put("test", true);
+            testOut.put("message", "test webhook acknowledged — no orders placed");
+            return ResponseEntity.ok(testOut);
+        }
+
         Map<Result, Integer> tally = new EnumMap<>(Result.class);
         for (Result r : Result.values()) tally.put(r, 0);
         Map<String, String> perSymbol = new LinkedHashMap<>();
         for (int i = 0; i < symbols.length; i++) {
             String sym = symbols[i];
             double px = safeDouble(prices, i);
-            Result r = orders.fire(sym, alertName, px, qty);
+            Map<String, Object> cols = payload.columns != null && i < payload.columns.size()
+                    ? payload.columns.get(i)
+                    : Map.of();
+            Result r = orders.fire(sym, alertName, px, qty, cols);
             tally.merge(r, 1, Integer::sum);
             perSymbol.put(sym, r.name());
         }
@@ -162,6 +179,25 @@ public class ChartinkWebhookController {
                 p.triggered_at   = str(m.get("triggered_at"));
                 p.scan_name      = str(m.get("scan_name"));
                 p.alert_name     = str(m.get("alert_name"));
+                // Optional per-row metadata; keys match the "Payload Columns"
+                // aliases the user configured on the Chartink alert (e.g.
+                // symbol / industry / sector). One entry per stocks[i].
+                Object rawCols = m.get("columns");
+                if (rawCols instanceof List<?> list) {
+                    List<Map<String, Object>> cols = new ArrayList<>(list.size());
+                    for (Object row : list) {
+                        if (row instanceof Map<?, ?> rm) {
+                            Map<String, Object> flat = new LinkedHashMap<>();
+                            for (var e : rm.entrySet()) {
+                                flat.put(String.valueOf(e.getKey()), e.getValue());
+                            }
+                            cols.add(flat);
+                        } else {
+                            cols.add(Map.of());
+                        }
+                    }
+                    p.columns = cols;
+                }
             } else {
                 for (String pair : trimmed.split("&")) {
                     int eq = pair.indexOf('=');
@@ -205,6 +241,23 @@ public class ChartinkWebhookController {
     }
 
     /**
+     * Chartink's "Test webhook" button posts a canned payload with placeholder
+     * tickers ({@code SYMBOL 1, SYMBOL 2, SYMBOL 3}). Real NSE EQ tickers are
+     * uppercase alphanumerics (with {@code &, -}) and never contain whitespace,
+     * so any symbol matching {@code SYMBOL \d+} — or, defensively, any symbol
+     * with an internal space — is treated as a test payload.
+     */
+    private static boolean isChartinkTestPayload(String[] symbols) {
+        if (symbols == null || symbols.length == 0) return false;
+        for (String s : symbols) {
+            if (s == null) return false;
+            String u = s.trim().toUpperCase();
+            if (!u.matches("SYMBOL\\s+\\d+")) return false;
+        }
+        return true;
+    }
+
+    /**
      * Chartink payload — flat POJO with snake_case field names matching the
      * vendor's on-the-wire schema so callers can also stringify it via
      * {@link ObjectMapper} without a mixin.
@@ -215,6 +268,14 @@ public class ChartinkWebhookController {
         public String triggered_at;
         public String scan_name;
         public String alert_name;
+        /**
+         * Per-row metadata Chartink sends when the alert has "Payload Columns"
+         * configured. {@code columns.get(i)} corresponds to {@code stocks[i]}
+         * and its keys match the user-defined aliases (e.g. {@code symbol},
+         * {@code industry}, {@code sector}). {@code null} if the alert has no
+         * columns configured or on the form-encoded transport.
+         */
+        public List<Map<String, Object>> columns;
     }
 
     /** In-memory snapshot of the last raw hit for debugging. */
