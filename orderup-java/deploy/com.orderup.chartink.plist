@@ -23,9 +23,14 @@
         <key>KITE_USER_ID</key><string></string>
         <key>TELEGRAM_BOT_TOKEN</key><string>8838501098:AAFbdt2QkSat7X-7HtdgUpdPH_r7IdiFvTc</string>
         <key>TELEGRAM_CHAT_ID</key><string>-5431538070</string>
-        <!-- Change this to any random string. Configure the exact same value as
-             the {secret} path segment of your Chartink alert URL. -->
-        <key>CHARTINK_SECRET</key><string>CHANGE_ME</string>
+        <!--
+          Chartink Alert webhook shared secret. This exact value MUST be the
+          {secret} path segment of the webhook URL you paste into Chartink's
+          "Create Alert" form. Rotate by generating a new value:
+              openssl rand -hex 20
+          Current bound scan: https://chartink.com/screener/kish3-oaewm
+        -->
+        <key>CHARTINK_SECRET</key><string>e093b64e88ba61a1300312baf7424312b047f0df</string>
     </dict>
 
     <key>RunAtLoad</key><true/>
