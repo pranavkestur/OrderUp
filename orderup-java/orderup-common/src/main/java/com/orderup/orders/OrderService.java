@@ -305,24 +305,49 @@ public class OrderService {
         // dump once, then O(1) forever). This snaps SL/TGT to a Kite-valid
         // multiple *before* placement — no wasted round trip to discover the
         // tick after a rejection.
+        BracketResult br = placeBracket(symbol, quantity, lastPrice,
+                rm.targetPctOrDefault(), rm.stopLossPctOrDefault());
+        attachMeta(symbol, side, indicator, meta, br.ocoId, br.sl, br.tgt);
+        return true;
+    }
+
+    /**
+     * Immutable outcome of a bracket-placement attempt. {@code ocoId} is
+     * {@code null} when the OCO failed (position is unprotected — a Telegram
+     * warning has already been sent). {@code sl}/{@code tgt} are the snapped
+     * prices we *tried* to place at, useful for logging even on failure.
+     */
+    public record BracketResult(Long ocoId, double sl, double tgt) {}
+
+    /**
+     * Place an OCO bracket around an already-filled long position at
+     * {@code refPrice} with {@code targetPct}/{@code stopLossPct} distances.
+     * Handles tick snapping, Telegram notification, and returns the result so
+     * callers can persist the GTT id. Used both by the normal alert flow (via
+     * {@link #placeSignalOrderWithBracket}) and by the admin repair endpoint
+     * that re-places brackets for positions where the original OCO was
+     * rejected (e.g. legacy tick-mismatch failures before this service knew
+     * about per-instrument ticks).
+     */
+    public BracketResult placeBracket(String symbol, int quantity, double refPrice,
+                                      double targetPct, double stopLossPct) {
         double tick = tickSizes.tickFor(symbol);
-        double tgt = snapUp  (lastPrice * (1 + rm.targetPctOrDefault()),   tick);
-        double sl  = snapDown(lastPrice * (1 - rm.stopLossPctOrDefault()), tick);
-        Long ocoId = null;
+        double tgt = snapUp  (refPrice * (1 + targetPct),   tick);
+        double sl  = snapDown(refPrice * (1 - stopLossPct), tick);
         try {
-            ocoId = placeOcoGttWithTickRetry(symbol, quantity, lastPrice, sl, tgt);
+            Long ocoId = placeOcoGttWithTickRetry(symbol, quantity, refPrice, sl, tgt);
             log.info("[OCO] {} — placed GTT id={} SL={} TGT={} tick={} (ref {})",
-                    symbol, ocoId, sl, tgt, tick, lastPrice);
+                    symbol, ocoId, sl, tgt, tick, refPrice);
             notifier.send("🎯 OCO for " + symbol + " — SL " + sl + " · TGT " + tgt
                     + " (gttId " + ocoId + ")");
+            return new BracketResult(ocoId, sl, tgt);
         } catch (Throwable t) {
             String msg = describe(t);
             log.error("[OCO] {} — FAILED to place bracket: {}", symbol, msg);
             notifier.send("⚠️ OCO FAILED for " + symbol + ": " + msg
                     + " — position is unprotected, review manually.");
+            return new BracketResult(null, sl, tgt);
         }
-        attachMeta(symbol, side, indicator, meta, ocoId, sl, tgt);
-        return true;
     }
 
     /**
