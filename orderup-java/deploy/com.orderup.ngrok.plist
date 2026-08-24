@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.orderup.ngrok</string>
+
+    <!--
+      Public HTTPS ingress for the Chartink webhook. Forwards
+      https://marbles-pamphlet-wages.ngrok-free.dev -> http://localhost:8080
+      where the orderup-chartink-app is listening. Free ngrok tier gives one
+      reserved static domain per account, so this URL never rotates (unlike a
+      trycloudflare.com "quick tunnel" which mints a new random hostname on
+      every restart and silently NXDOMAINs Chartink alerts when it dies).
+
+      KeepAlive=true means launchd restarts ngrok if the process crashes, the
+      network flips (Wi-Fi <-> Ethernet), or the Mac wakes from sleep. Chartink
+      URL stays the same across all of those.
+    -->
+
+    <key>WorkingDirectory</key>
+    <string>/Users/pranavkestur/Projects/OrderUp/orderup-java/orderup-chartink-app</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/ngrok</string>
+        <string>http</string>
+        <string>8080</string>
+        <string>--url=https://marbles-pamphlet-wages.ngrok-free.dev</string>
+        <string>--log=stdout</string>
+        <string>--log-format=logfmt</string>
+    </array>
+
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
+    <key>ThrottleInterval</key><integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/pranavkestur/Projects/OrderUp/orderup-java/orderup-chartink-app/logs/ngrok.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/pranavkestur/Projects/OrderUp/orderup-java/orderup-chartink-app/logs/ngrok.log</string>
+</dict>
+</plist>
+
