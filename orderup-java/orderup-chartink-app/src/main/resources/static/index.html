@@ -2,7 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<!-- iOS: when Added to Home Screen, launch in a full-screen web-app view
+     (no Safari chrome). Status-bar style matches the dark theme. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="OrderUp">
+<meta name="theme-color" content="#0f1420">
 <title>OrderUp · Chartink P&L</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
@@ -128,6 +134,108 @@
            border:1px solid var(--border); border-radius:8px; font-size:13px; display:none; z-index:20 }
   #toast.err { border-color:var(--red); color:var(--red) }
   #toast.ok  { border-color:var(--green); color:var(--green) }
+
+  /* ============================================================
+     Responsive: tablet ≤900px, phone ≤600px.
+     Desktop layout above is unchanged. These blocks only override
+     for narrower viewports. Uses min-content grids on mobile so
+     wide tables become horizontally scrollable within their card
+     instead of blowing out the viewport.
+     ============================================================ */
+
+  /* Tablet & small laptop — tighten padding, drop KPI to 2-col */
+  @media (max-width: 900px) {
+    body { font-size:13px }
+    header { padding:12px 16px }
+    header h1 { font-size:18px }
+    main { padding:14px 16px }
+    .kpi-grid { grid-template-columns:repeat(2,1fr); gap:10px }
+    .kpi { padding:12px }
+    .kpi .value { font-size:22px }
+    .range-strip { grid-template-columns:repeat(2,1fr) }
+    .chart-box { height:240px }
+    .drawer { width:100vw; max-width:100vw; right:-100vw }
+  }
+
+  /* Phone — single-column KPIs, compact tables, horizontal scroll for wide tables */
+  @media (max-width: 600px) {
+    body { font-size:13px }
+    header {
+      padding:10px 12px; gap:8px;
+      /* Stack title + controls on their own rows so buttons don't wrap awkwardly. */
+      flex-direction:column; align-items:stretch;
+    }
+    header h1 { font-size:16px; justify-content:space-between }
+    header h1 small { display:none } /* "· Chartink P&L" subtitle hidden — save space */
+    .meta-strip { font-size:11px; margin-top:2px }
+    .meta-strip span { margin-right:10px; display:inline-block }
+    .controls { width:100%; justify-content:space-between }
+    .controls .btn { flex:1; min-width:0; padding:9px 8px; font-size:12px; text-align:center }
+    .badge { font-size:10px; padding:3px 8px }
+
+    main { padding:12px 10px }
+
+    /* KPI cards: 2 per row on phone (was auto-fit 230px min = 1 per row on iPhone).
+       Value stays big so it's glanceable, sub-label shrinks. */
+    .kpi-grid { grid-template-columns:repeat(2,1fr); gap:8px; margin-bottom:14px }
+    .kpi { padding:10px 12px }
+    .kpi .label { font-size:10px }
+    .kpi .value { font-size:19px; margin-top:4px }
+    .kpi .sub { font-size:10px; margin-top:3px }
+
+    /* Range strip: 2×2 grid, more compact. */
+    .range-strip { grid-template-columns:repeat(2,1fr); gap:8px; margin-bottom:14px }
+    .range-card { padding:9px 11px }
+    .range-card .rc-value { font-size:15px }
+    .range-card .rc-sub { font-size:11px }
+
+    /* Charts get shorter and stack (they already do at 1100px, but shrink height). */
+    .charts-grid { gap:12px; margin-bottom:14px }
+    .chart-box { height:200px }
+
+    /* Cards: less internal padding, tighter card-to-card gap. */
+    .card { padding:12px; margin-bottom:14px; border-radius:8px }
+    .card h3 { font-size:11px; margin-bottom:10px }
+
+    /* Sector row: kill the fixed 80px label column, let it wrap under. */
+    .sector-row { grid-template-columns:1fr 70px; grid-template-rows:auto auto; gap:2px 8px }
+    .sector-row > :first-child { grid-column:1 / -1; font-size:12px } /* sector name spans full width */
+    .sector-row > .sector-bar { grid-column:1; grid-row:2 }
+    .sector-row > .sector-pnl { grid-column:2; grid-row:2 }
+    .sector-list { max-height:none } /* let it grow — page scroll handles overflow */
+
+    /* Tables: force horizontal scroll instead of squishing columns.
+       The .table-scroll wrapper already exists; we just make it work sideways. */
+    .table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch;
+                    max-height:none; margin:0 -12px; padding:0 12px }
+    table { min-width:520px } /* prevents column collapse; card gets a side-swipe area */
+    th, td { padding:7px 6px; font-size:12px }
+    th { font-size:9px }
+    .row-symbol { font-size:13px }
+    .sector-pill { font-size:9px }
+
+    /* Table aggregate footer: stack items instead of wrapping. */
+    .table-footer { gap:6px 14px; font-size:11px; padding-top:8px }
+
+    /* Chips (filters): scroll sideways rather than wrapping into 4+ rows. */
+    .chips { flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch;
+             margin:0 -12px 10px; padding:0 12px 4px }
+    .chip { flex:0 0 auto; padding:5px 11px; font-size:11px }
+
+    /* Drawer: full-screen sheet on phone. */
+    .drawer { width:100vw; max-width:100vw; right:-100vw; padding:14px }
+    .drawer .kv { grid-template-columns:90px 1fr; font-size:12px }
+    .drawer pre { font-size:10px }
+
+    /* Toast: full-width strip at the bottom instead of a corner pill (easier to see on a phone). */
+    #toast { left:10px; right:10px; bottom:10px; text-align:center }
+  }
+
+  /* Extra-narrow (iPhone SE / small phones ≤380px): drop KPIs to 1 col so the big number breathes. */
+  @media (max-width: 380px) {
+    .kpi-grid { grid-template-columns:1fr }
+    .kpi .value { font-size:22px }
+  }
 </style>
 </head>
 <body>
