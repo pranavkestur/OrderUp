@@ -31,12 +31,14 @@ UPSTREAM_PORT = int(os.environ.get("UPSTREAM_PORT", "8090"))
 UID           = os.getuid()
 
 # Guardrail: only these labels can be controlled, so a leaked secret cannot
-# be used to poke arbitrary launchd services.
+# be used to poke arbitrary launchd services. Value is (label, plist path) —
+# we need the plist path for `launchctl bootstrap` on start.
+_LA = os.path.expanduser("~/Library/LaunchAgents")
 ALLOWED_LABELS = {
-    "chartink":      "com.orderup.chartink",
-    "trading":       "com.orderup.trading",
-    "ngrok":         "com.orderup.ngrok",
-    "launcher-self": "com.orderup.launcher",
+    "chartink":      ("com.orderup.chartink", "%s/com.orderup.chartink.plist" % _LA),
+    "trading":       ("com.orderup.trading",  "%s/com.orderup.trading.plist"  % _LA),
+    "ngrok":         ("com.orderup.ngrok",    "%s/com.orderup.ngrok.plist"    % _LA),
+    "launcher-self": ("com.orderup.launcher", "%s/com.orderup.launcher.plist" % _LA),
 }
 
 # RFC 7230 hop-by-hop headers + Host + Content-Length: we manage these
@@ -58,7 +60,9 @@ def _target(label):
 def _status(label):
     rc, out = _run(["launchctl", "print", _target(label)])
     if rc != 0:
-        return {"label": label, "loaded": False, "raw": out.splitlines()[:5]}
+        # Not-loaded is the expected state after a Stop — surface it as such
+        # rather than a scary "raw" dump.
+        return {"label": label, "loaded": False, "state": "stopped"}
     info = {"label": label, "loaded": True}
     for line in out.splitlines():
         line = line.strip()
@@ -69,15 +73,27 @@ def _status(label):
     return info
 
 
-def _act(label, action):
+def _act(entry, action):
+    label, plist_path = entry
+    tgt = _target(label)
+    domain = "gui/%d" % UID
     if action == "start":
-        return _run(["launchctl", "kickstart", _target(label)])
+        # `bootstrap` (re-)loads the job from its plist. RunAtLoad=true on the
+        # plist means the process spawns immediately. If it's already loaded
+        # this returns an error, which we swallow — a subsequent kickstart
+        # ensures the process is up regardless.
+        _run(["launchctl", "bootstrap", domain, plist_path])
+        return _run(["launchctl", "kickstart", tgt])
     if action == "stop":
-        # SIGTERM leaves the job loaded so KeepAlive brings it back on the
-        # next /start (no launchctl load surgery needed).
-        return _run(["launchctl", "kill", "SIGTERM", _target(label)])
+        # `bootout` removes the job from the launchd domain entirely (also
+        # SIGTERMs the running process). KeepAlive=true cannot respawn what
+        # is no longer loaded, so the app stays down until a Start.
+        return _run(["launchctl", "bootout", tgt])
     if action == "restart":
-        return _run(["launchctl", "kickstart", "-k", _target(label)])
+        # Bootstrap the plist if it isn't loaded (recovers from a prior Stop),
+        # then kickstart -k = SIGKILL current + spawn fresh in one call.
+        _run(["launchctl", "bootstrap", domain, plist_path])
+        return _run(["launchctl", "kickstart", "-k", tgt])
     return 2, "unknown action"
 
 
@@ -118,10 +134,11 @@ class H(http.server.BaseHTTPRequestHandler):
         if not SECRET or parts[1] != SECRET:
             return self._json(401, {"error": "bad or missing launcher secret"})
         app, action = parts[2], parts[3]
-        label = ALLOWED_LABELS.get(app)
-        if not label:
+        entry = ALLOWED_LABELS.get(app)
+        if not entry:
             return self._json(400, {"error": "unknown app",
                                     "allowed": sorted(ALLOWED_LABELS.keys())})
+        label = entry[0]
         if action == "status":
             return self._json(200, _status(label))
         if self.command != "POST":
@@ -129,7 +146,7 @@ class H(http.server.BaseHTTPRequestHandler):
         if action not in ("start", "stop", "restart"):
             return self._json(400, {"error": "unknown action",
                                     "allowed": ["start", "stop", "restart", "status"]})
-        rc, out = _act(label, action)
+        rc, out = _act(entry, action)
         return self._json(200 if rc == 0 else 500, {
             "app": app, "action": action, "rc": rc, "out": out,
             "status": _status(label),
