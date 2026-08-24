@@ -31,6 +31,13 @@
           Current bound scan: https://chartink.com/screener/kish3-oaewm
         -->
         <key>CHARTINK_SECRET</key><string>e093b64e88ba61a1300312baf7424312b047f0df</string>
+        <!--
+          Spring Boot's server.port. We moved chartink off 8080 to make room
+          for the orderup-launcher reverse proxy (which is the public entry
+          point on 8080 behind ngrok). The launcher forwards all non-lifecycle
+          paths here, so Chartink and the dashboard URLs are unchanged.
+        -->
+        <key>SERVER_PORT</key><string>8090</string>
     </dict>
 
     <key>RunAtLoad</key><true/>

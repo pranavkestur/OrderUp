@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.orderup.launcher</string>
+
+    <!--
+      Always-on control daemon for the OrderUp launchd family. Exposes
+      secret-gated /lifecycle/{secret}/{app}/{start,stop,restart,status}
+      endpoints so the operator can start/stop/restart other jobs
+      (chartink, trading, ngrok) from anywhere -- via a second ngrok
+      tunnel that stays up even when the chartink app is down.
+
+      Runs Python stdlib only. Zero deps. Bound to 127.0.0.1 so the
+      only way in is through the (secret-gated) ngrok tunnel.
+
+      The launcher itself is under KeepAlive=true, and the ngrok
+      supervisor plist is separately KeepAlive=true, so the *control
+      plane* survives everything short of macOS itself dying.
+    -->
+
+    <key>WorkingDirectory</key>
+    <string>/Users/pranavkestur/Projects/OrderUp/orderup-java</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>-u</string>
+        <string>/Users/pranavkestur/Projects/OrderUp/orderup-java/deploy/orderup-launcher.py</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!--
+          Rotate by generating a new value:
+              openssl rand -hex 20
+          The current value must match the {secret} path segment of every
+          URL you paste into a phone shortcut / curl alias:
+              POST https://<launcher-ngrok-domain>/lifecycle/{secret}/chartink/start
+        -->
+        <key>LAUNCHER_SECRET</key><string>cdb17863e5d437fd1c02638799de8fc6f900ffb7</string>
+        <!--
+          The launcher is the *public entry point* on 8080 (via ngrok).
+          It handles /lifecycle/* itself and reverse-proxies everything else
+          to the chartink Spring Boot app on 127.0.0.1:8090.
+        -->
+        <key>LAUNCHER_PORT</key><string>8080</string>
+        <key>UPSTREAM_HOST</key><string>127.0.0.1</string>
+        <key>UPSTREAM_PORT</key><string>8090</string>
+    </dict>
+
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
+    <key>ThrottleInterval</key><integer>5</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/pranavkestur/Projects/OrderUp/orderup-java/orderup-chartink-app/logs/launcher.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/pranavkestur/Projects/OrderUp/orderup-java/orderup-chartink-app/logs/launcher.log</string>
+</dict>
+</plist>
+
