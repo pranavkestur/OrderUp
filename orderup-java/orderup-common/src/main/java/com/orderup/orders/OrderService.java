@@ -1,6 +1,7 @@
 package com.orderup.orders;
 
 import com.orderup.config.TradingProperties;
+import com.orderup.marketdata.TickSizeService;
 import com.orderup.notify.TelegramNotifier;
 import com.zerodhatech.kiteconnect.KiteConnect;
 import com.zerodhatech.models.GTTParams;
@@ -16,6 +17,8 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.Objects;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Places orders at Kite, records them in the DB, and — when the operator has clicked
@@ -36,6 +39,7 @@ public class OrderService {
     private final TelegramNotifier notifier;
     private final HoldingsService holdings;
     private final RuntimeFlagRepository flags;
+    private final TickSizeService tickSizes;
 
     /**
      * Live toggle from the UI. When true, scans/signals still run but no order
@@ -52,7 +56,7 @@ public class OrderService {
     public OrderService(KiteConnect kite, TradingProperties trading,
                         OrderRecordRepository repo, PotentialOrderRepository potentialRepo,
                         TelegramNotifier notifier, HoldingsService holdings,
-                        RuntimeFlagRepository flags) {
+                        RuntimeFlagRepository flags, TickSizeService tickSizes) {
         this.kite = kite;
         this.trading = trading;
         this.repo = repo;
@@ -60,6 +64,7 @@ public class OrderService {
         this.notifier = notifier;
         this.holdings = holdings;
         this.flags = flags;
+        this.tickSizes = tickSizes;
     }
 
     @PostConstruct
@@ -296,13 +301,18 @@ public class OrderService {
             return true;
         }
 
-        double tgt = round(lastPrice * (1 + rm.targetPctOrDefault()));
-        double sl  = round(lastPrice * (1 - rm.stopLossPctOrDefault()));
+        // Look up the instrument's actual tick size (lazy-loads the NSE EQ
+        // dump once, then O(1) forever). This snaps SL/TGT to a Kite-valid
+        // multiple *before* placement — no wasted round trip to discover the
+        // tick after a rejection.
+        double tick = tickSizes.tickFor(symbol);
+        double tgt = snapUp  (lastPrice * (1 + rm.targetPctOrDefault()),   tick);
+        double sl  = snapDown(lastPrice * (1 - rm.stopLossPctOrDefault()), tick);
         Long ocoId = null;
         try {
-            ocoId = placeOcoGtt(symbol, quantity, lastPrice, sl, tgt);
-            log.info("[OCO] {} — placed GTT id={} SL={} TGT={} (ref {})",
-                    symbol, ocoId, sl, tgt, lastPrice);
+            ocoId = placeOcoGttWithTickRetry(symbol, quantity, lastPrice, sl, tgt);
+            log.info("[OCO] {} — placed GTT id={} SL={} TGT={} tick={} (ref {})",
+                    symbol, ocoId, sl, tgt, tick, lastPrice);
             notifier.send("🎯 OCO for " + symbol + " — SL " + sl + " · TGT " + tgt
                     + " (gttId " + ocoId + ")");
         } catch (Throwable t) {
@@ -313,6 +323,43 @@ public class OrderService {
         }
         attachMeta(symbol, side, indicator, meta, ocoId, sl, tgt);
         return true;
+    }
+
+    /**
+     * Backstop for the rare case where {@link TickSizeService} was unable to
+     * fetch the instrument dump (auth glitch, network blip) and returned the
+     * NSE default 0.05 for a scrip that actually trades on a coarser tick.
+     * Parses Kite's rejection message for {@code "multiple of tick size X"}
+     * and re-snaps SL/TGT once. In the common case this never runs.
+     */
+    private static final Pattern TICK_SIZE_ERR =
+            Pattern.compile("multiple of tick size\\s+([0-9]+(?:\\.[0-9]+)?)",
+                    Pattern.CASE_INSENSITIVE);
+
+    private Long placeOcoGttWithTickRetry(String symbol, int quantity,
+                                          double lastPrice, double sl, double tgt) throws Throwable {
+        try {
+            return placeOcoGtt(symbol, quantity, lastPrice, sl, tgt);
+        } catch (Throwable first) {
+            String msg = describe(first);
+            Matcher m = TICK_SIZE_ERR.matcher(msg);
+            if (!m.find()) throw first;
+            double tick = Double.parseDouble(m.group(1));
+            if (tick <= 0) throw first;
+            double sl2  = snapDown(sl,  tick); // don't loosen the stop
+            double tgt2 = snapUp(tgt,   tick); // don't cut the target short
+            log.warn("[OCO] {} — retrying with tick={} SL {}->{} TGT {}->{}",
+                    symbol, tick, sl, sl2, tgt, tgt2);
+            return placeOcoGtt(symbol, quantity, lastPrice, sl2, tgt2);
+        }
+    }
+
+    private static double snapDown(double v, double tick) {
+        return Math.floor(v / tick) * tick;
+    }
+
+    private static double snapUp(double v, double tick) {
+        return Math.ceil(v / tick) * tick;
     }
 
     /**
