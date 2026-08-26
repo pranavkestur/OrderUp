@@ -98,11 +98,16 @@ public class PositionService {
         holdings.refreshIfStale(30_000);
         syncTodaysFills();
 
+        // Build FIFO over the FULL order history and only *emit* realized P&L
+        // for lot-slices whose SELL falls inside [from, to]. Range-filtering
+        // BOTH sides (as the previous impl did) silently drops SELLs whose BUY
+        // is out of range — e.g. Aug-24 BUY, Aug-26 SELL, range=today → BUY is
+        // filtered out first, longs is empty when the SELL arrives, and the
+        // whole loss vanishes from realizedPnl / winning / losing.
+        // This mirrors the SELL-anchored logic already used by closedTrades().
         List<OrderRecord> records = repo.findAll();
         Map<String, List<OrderRecord>> byKey = new LinkedHashMap<>();
         for (OrderRecord o : records) {
-            if (from != null && o.getPlacedAt().isBefore(from)) continue;
-            if (to   != null && o.getPlacedAt().isAfter(to))   continue;
             String strategy = nullSafe(o.getIndicator());
             if (strategyFilter != null && !strategyFilter.equalsIgnoreCase(strategy)) continue;
             byKey.computeIfAbsent(strategy + "|" + o.getSymbol(), k -> new ArrayList<>()).add(o);
@@ -124,17 +129,23 @@ public class PositionService {
                 if ("BUY".equalsIgnoreCase(o.getSide())) {
                     longs.addLast(new double[]{ q, p });
                 } else if ("SELL".equalsIgnoreCase(o.getSide())) {
+                    Instant exitAt = o.getPlacedAt();
+                    boolean inRange = (from == null || !exitAt.isBefore(from))
+                                   && (to   == null || !exitAt.isAfter(to));
                     int remaining = q;
                     while (remaining > 0 && !longs.isEmpty()) {
                         double[] lot = longs.peekFirst();
                         int take = (int) Math.min(lot[0], remaining);
                         double tradePnl = (p - lot[1]) * take;
-                        realized += tradePnl;
-                        totalTrades += 1;
-                        if (tradePnl > 0) winning++; else if (tradePnl < 0) losing++;
-                        StrategyStats s = byStrategy.computeIfAbsent(strategy, k -> new StrategyStats());
-                        s.realizedPnl += tradePnl;
-                        s.trades += 1;
+                        if (inRange) {
+                            realized += tradePnl;
+                            totalTrades += 1;
+                            if (tradePnl > 0) winning++;
+                            else if (tradePnl < 0) losing++;
+                            StrategyStats s = byStrategy.computeIfAbsent(strategy, k -> new StrategyStats());
+                            s.realizedPnl += tradePnl;
+                            s.trades += 1;
+                        }
                         lot[0] -= take;
                         remaining -= take;
                         if (lot[0] == 0) longs.pollFirst();
@@ -325,11 +336,14 @@ public class PositionService {
 
     public List<DailyPoint> dailySeries(Instant from, Instant to, String strategyFilter) {
         syncTodaysFills();
+        // Same SELL-anchored FIFO logic as summary() / closedTrades(): walk the
+        // full history to build lots, but only emit the daily P&L point on the
+        // SELL's date, and only if that SELL is inside [from, to]. Filtering
+        // BUYs by range would silently drop the cost basis of positions bought
+        // before the window, badly skewing Sharpe / max-DD downstream.
         List<OrderRecord> records = repo.findAll();
         Map<String, List<OrderRecord>> byKey = new LinkedHashMap<>();
         for (OrderRecord o : records) {
-            if (from != null && o.getPlacedAt().isBefore(from)) continue;
-            if (to   != null && o.getPlacedAt().isAfter(to))   continue;
             String strategy = nullSafe(o.getIndicator());
             if (strategyFilter != null && !strategyFilter.equalsIgnoreCase(strategy)) continue;
             byKey.computeIfAbsent(strategy + "|" + o.getSymbol(), k -> new ArrayList<>()).add(o);
@@ -346,13 +360,16 @@ public class PositionService {
                 if ("BUY".equalsIgnoreCase(o.getSide())) {
                     longs.addLast(new double[]{ q, p });
                 } else if ("SELL".equalsIgnoreCase(o.getSide())) {
+                    Instant exitAt = o.getPlacedAt();
+                    boolean inRange = (from == null || !exitAt.isBefore(from))
+                                   && (to   == null || !exitAt.isAfter(to));
                     int rem = q;
-                    LocalDate day = o.getPlacedAt().atZone(IST).toLocalDate();
+                    LocalDate day = exitAt.atZone(IST).toLocalDate();
                     while (rem > 0 && !longs.isEmpty()) {
                         double[] lot = longs.peekFirst();
                         int take = (int) Math.min(lot[0], rem);
                         double pnl = (p - lot[1]) * take;
-                        byDay.merge(day, pnl, Double::sum);
+                        if (inRange) byDay.merge(day, pnl, Double::sum);
                         lot[0] -= take;
                         rem -= take;
                         if (lot[0] == 0) longs.pollFirst();
@@ -804,14 +821,25 @@ public class PositionService {
         double realizedRoiPct   = realizedCost > 0 ? (s.realizedPnl()   / realizedCost) * 100.0 : 0.0;
         double unrealizedRoiPct = deployed > 0     ? (s.unrealizedPnl() / deployed)     * 100.0 : 0.0;
         double totalPnl = s.realizedPnl() + s.unrealizedPnl();
-        double totalRoiPct = (deployed + realizedCost) > 0
-                ? (totalPnl / (deployed + realizedCost)) * 100.0 : 0.0;
+        // Denominator = the greater of "still-tied-up cost" (open positions)
+        // and "cost that cycled through closed trades in this range". Using
+        // the SUM as the previous impl did double-counts recycled capital:
+        // if you buy X for ₹5k, close at a loss, buy Y for ₹5k, capital at
+        // risk was always ₹5k — never ₹10k — so ROI on ₹10k halves the number.
+        double roiBase = Math.max(deployed, realizedCost);
+        double totalRoiPct = roiBase > 0 ? (totalPnl / roiBase) * 100.0 : 0.0;
         int total = s.winning() + s.losing();
         double winRate = total > 0 ? (s.winning() * 100.0 / total) : 0.0;
-        double sharpe = sharpeRatio(dailySeries(from, to, strategyFilter));
-        double maxDD  = maxDrawdown(dailySeries(from, to, strategyFilter));
+        List<DailyPoint> daily = dailySeries(from, to, strategyFilter);
+        double sharpe = sharpeRatio(daily);
+        // Max DD normalized against deployed capital rather than "peak profit",
+        // so a series that never crosses 0 still reports the real drawdown.
+        double maxDD  = maxDrawdown(daily, Math.max(deployed, realizedCost));
+        // Count only BUY orders in-range for uniqueSymbolsCount so a reconciled
+        // SELL-only row (whose BUY was earlier) doesn't inflate the number.
         Set<String> uniqSymbols = new HashSet<>();
         for (OrderRecord o : repo.findAll()) {
+            if (!"BUY".equalsIgnoreCase(o.getSide())) continue;
             if (strategyFilter != null && !strategyFilter.equalsIgnoreCase(nullSafe(o.getIndicator()))) continue;
             if (o.getPlacedAt() != null && from != null && o.getPlacedAt().isBefore(from)) continue;
             if (o.getPlacedAt() != null && to   != null && o.getPlacedAt().isAfter(to))   continue;
@@ -852,17 +880,33 @@ public class PositionService {
         return (mean / sd) * Math.sqrt(252);
     }
 
-    /** Max drawdown as a % of peak cumulative P&L. Returns 0 if series empty. */
-    private static double maxDrawdown(List<DailyPoint> daily) {
+    /**
+     * Max drawdown as a % of {@code capitalBase} (typically the deployed
+     * capital / peak cost tied up). Unlike a "peak-profit" normaliser, this
+     * still reports a meaningful number when cumulative P&L never crosses
+     * zero — a portfolio that only loses money should still show its worst
+     * trough as a % of the money at risk, not silently report 0%.
+     *
+     * <p>Formula:
+     * <pre>
+     *   cum_i = Σ pnl[0..i]
+     *   peak_i = max(0, cum_0..i)                // baseline = starting equity of 0
+     *   dd_i   = min(0, cum_i - peak_i)          // always ≤ 0
+     *   maxDD_₹ = min(dd_i)
+     *   maxDD_% = maxDD_₹ / max(capitalBase, 1) × 100
+     * </pre>
+     */
+    private static double maxDrawdown(List<DailyPoint> daily, double capitalBase) {
         if (daily == null || daily.isEmpty()) return 0.0;
-        double cum = 0.0, peak = 0.0, maxDd = 0.0;
+        double cum = 0.0, peak = 0.0, maxDdRupees = 0.0;
         for (DailyPoint d : daily) {
             cum += d.pnl();
             if (cum > peak) peak = cum;
-            double dd = peak > 0 ? ((cum - peak) / peak) * 100.0 : 0.0;
-            if (dd < maxDd) maxDd = dd;
+            double dd = cum - peak; // ≤ 0
+            if (dd < maxDdRupees) maxDdRupees = dd;
         }
-        return maxDd;
+        double base = Math.max(capitalBase, 1.0);
+        return (maxDdRupees / base) * 100.0;
     }
 
     /** Mutable open-lot for the FIFO walk; carries the source BUY for metadata. */

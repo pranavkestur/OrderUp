@@ -503,11 +503,17 @@ function renderKpis() {
 function renderRangeStrip() {
   ['today','week','month','all'].forEach(r => {
     const k = state.ranges[r]; if (!k) return;
-    const total = (k.realizedPnl || 0) + (k.unrealizedPnl || 0);
+    // Range tiles show REALIZED P&L for the range only. We deliberately do
+    // NOT add unrealizedPnl — that number is a snapshot of the current MTM
+    // of all open positions and is the same for every range, so adding it
+    // to TODAY/WEEK/MONTH would inflate them by the full open-book delta.
+    // For "all" the tile still represents lifetime realized; the main
+    // strip shows realized + unrealized separately.
+    const val = (k.realizedPnl || 0);
     document.getElementById('rw-' + r).innerHTML =
-      `<span class="${signCls(total)}">${fmtRupee(total)}</span>`;
+      `<span class="${signCls(val)}">${fmtRupee(val)}</span>`;
     document.getElementById('rw-' + r + '-sub').innerHTML =
-      `<span class="${signCls(k.totalRoiPct)}">${fmtPct(k.totalRoiPct)}</span>`;
+      `<span class="${signCls(k.realizedRoiPct)}">${fmtPct(k.realizedRoiPct)}</span>`;
   });
 }
 
