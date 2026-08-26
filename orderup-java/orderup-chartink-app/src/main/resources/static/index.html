@@ -54,6 +54,8 @@
   .kpi .value { font-size:26px; font-weight:700; margin-top:8px; font-variant-numeric:tabular-nums }
   .kpi .sub   { color:var(--dim); font-size:12px; margin-top:6px }
   .pos { color:var(--green) } .neg { color:var(--red) } .neutral { color:var(--yellow) }
+  /* Target price gets its own colour so it isn't confused with realised/positive P&L. */
+  .tgt { color:var(--blue) }
 
   /* Time-window strip */
   .range-strip { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:20px }
@@ -613,7 +615,7 @@ function renderOpen() {
       <td class="right">${p.buyPrice.toFixed(2)}</td>
       <td class="right">${p.ltp ? p.ltp.toFixed(2) : '—'}</td>
       <td class="right neg">${slCell}</td>
-      <td class="right pos">${tgtCell}</td>
+      <td class="right tgt">${tgtCell}</td>
       <td class="right ${signCls(p.unrealizedPnl)}">${fmtRupee(p.unrealizedPnl)}</td>
       <td class="right ${signCls(p.pnlPct)}">${fmtPct(p.pnlPct)}</td>
       <td>${held != null ? fmtHeld(held) : '—'}</td>
@@ -639,7 +641,7 @@ function openPosDrawer(idx) {
       <div class="k">Buy price</div>      <div>${p.buyPrice.toFixed(2)}</div>
       <div class="k">LTP</div>            <div>${p.ltp ? p.ltp.toFixed(2) : '—'}</div>
       <div class="k">Stop-loss</div>      <div class="neg">${p.stopLossPrice != null ? p.stopLossPrice.toFixed(2) + ' (' + slPct + ')' : '—'}</div>
-      <div class="k">Target</div>         <div class="pos">${p.targetPrice   != null ? p.targetPrice.toFixed(2)   + ' (' + tgtPct + ')' : '—'}</div>
+      <div class="k">Target</div>         <div class="tgt">${p.targetPrice   != null ? p.targetPrice.toFixed(2)   + ' (' + tgtPct + ')' : '—'}</div>
       <div class="k">Unrealized</div>     <div class="${signCls(p.unrealizedPnl)}">${fmtRupee2(p.unrealizedPnl)} (${fmtPct(p.pnlPct)})</div>
       <div class="k">Opened</div>         <div>${p.openedAt ? fmtTime(p.openedAt) : '—'}</div>
       <div class="k">Kite BUY id</div>    <div>${p.kiteOrderId  ? '<a href="https://kite.zerodha.com/orders" target="_blank">'+p.kiteOrderId +'</a>' : '—'}</div>
