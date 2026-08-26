@@ -6,6 +6,7 @@ import com.orderup.orders.OrderRecordRepository;
 import com.orderup.orders.PotentialOrder;
 import com.orderup.orders.PotentialOrderRepository;
 import com.zerodhatech.kiteconnect.KiteConnect;
+import com.zerodhatech.models.GTT;
 import com.zerodhatech.models.LTPQuote;
 import com.zerodhatech.models.Order;
 import com.zerodhatech.models.Position;
@@ -150,6 +151,37 @@ public class PositionService {
     }
 
     public List<OpenPosition> strategyPositions(String strategyFilter) {
+        // Two freshness calls that were previously only done by summary(...) —
+        // without them, hitting /api/pnl/open-positions on a fresh JVM before
+        // any other endpoint would show ONLY today's Kite day-positions and
+        // silently drop every held-from-earlier-day CNC buy, because
+        // HoldingsService.snapshot() was still an empty cache.
+        // syncTodaysFills() also keeps just-placed BUYs' filledQty / status in
+        // step with Kite's orderbook so the dashboard reflects reality.
+        holdings.refreshIfStale(30_000);
+        syncTodaysFills();
+        // Pull in any OCO stop-loss / target exits that Kite executed on our
+        // behalf. Without this, symbols the bracket auto-sold appear to have
+        // "vanished" — Kite no longer reports them in positions/holdings, but
+        // OrderUp has no SELL record either, so they drop out of Open
+        // Positions silently instead of moving to Closed Trades. Idempotent.
+        try {
+            syncExternalSells(strategyFilter);
+        } catch (Throwable t) {
+            log.warn("strategyPositions: syncExternalSells swallowed: {}", t.getMessage());
+        }
+        // Same-day OCO fills go through syncExternalSells (Kite's /orders
+        // orderbook is intraday-only). For OCOs that triggered on a PREVIOUS
+        // trading day, walk each latestBuy whose symbol is no longer in Kite
+        // holdings/positions and reconstruct the exit from the OCO GTT's
+        // triggered leg. Also idempotent (skips symbols that already have a
+        // SELL record).
+        try {
+            reconcileExternallyClosed(strategyFilter);
+        } catch (Throwable t) {
+            log.warn("strategyPositions: reconcileExternallyClosed swallowed: {}", t.getMessage());
+        }
+
         Map<String, OrderRecord> latestBuy = latestBuyBySymbol(repo.findAll());
         if (latestBuy.isEmpty()) return List.of();
 
@@ -604,6 +636,149 @@ public class PositionService {
             log.warn("syncExternalSells failed: {}", t.getMessage());
         }
         if (imported > 0) log.info("Imported {} external SELLs from Kite orderbook", imported);
+        return imported;
+    }
+
+    /**
+     * Reconcile positions the operator can see on Kite as "no longer held" but
+     * for which OrderUp still has a BUY {@link OrderRecord} and no matching
+     * SELL. The typical cause: the bracket OCO's stop-loss (or target) leg
+     * triggered on a previous trading day, so Kite's intraday {@code /orders}
+     * feed no longer surfaces the sell — {@link #syncExternalSells(String)}
+     * can never pick it up on day+N.
+     *
+     * <p>For each such symbol we call {@code kite.getGTT(kiteOcoGttId)} on the
+     * OCO recorded at BUY time. Kite persists the two-leg GTT with its final
+     * state indefinitely: the triggered leg's {@code result.orderResult.orderId}
+     * points at the SELL order Kite generated. We then hit
+     * {@code getOrderHistory(orderId)} to get the actual fill price + timestamp
+     * for that SELL, and materialize an {@link OrderRecord} with
+     * {@code status=EXTERNALLY_CLOSED}. If the GTT lookup fails (Kite retention,
+     * network, wrong id), we fall back to the recorded SL price as an
+     * approximation so the position at least stops "silently vanishing".
+     *
+     * <p>Idempotent: symbols that already have any SELL record are skipped.
+     */
+    public int reconcileExternallyClosed(String strategyFilter) {
+        List<OrderRecord> all = repo.findAll();
+        Map<String, OrderRecord> latestBuy = latestBuyBySymbol(all);
+        if (latestBuy.isEmpty()) return 0;
+
+        Set<String> hasSell = new HashSet<>();
+        for (OrderRecord o : all) {
+            if ("SELL".equalsIgnoreCase(o.getSide()) && o.getSymbol() != null) {
+                hasSell.add(o.getSymbol().toUpperCase(Locale.ROOT));
+            }
+        }
+
+        // Union of "currently owned" symbols per Kite: net day-positions + holdings.
+        Set<String> owned = new HashSet<>();
+        try {
+            Map<String, List<Position>> pos = kite.getPositions();
+            List<Position> net = pos == null ? List.of() : pos.getOrDefault("net", List.of());
+            for (Position p : net) {
+                if (p.tradingSymbol == null) continue;
+                if (p.netQuantity > 0) owned.add(p.tradingSymbol.toUpperCase(Locale.ROOT));
+            }
+        } catch (Throwable ignored) {
+            // Non-fatal — falling through to holdings-only is fine.
+        }
+        for (String s : holdings.snapshot().keySet()) owned.add(s.toUpperCase(Locale.ROOT));
+
+        int imported = 0;
+        for (var e : latestBuy.entrySet()) {
+            String sym = e.getKey();
+            OrderRecord buy = e.getValue();
+            if (owned.contains(sym)) continue;
+            if (hasSell.contains(sym)) continue;
+            if (strategyFilter != null
+                    && !strategyFilter.equalsIgnoreCase(nullSafe(buy.getIndicator()))) continue;
+
+            int qty = buy.getFilledQty() != null ? buy.getFilledQty() : 0;
+            if (qty <= 0) continue;
+
+            Double exitPrice = null;
+            String exitOrderId = null;
+            Instant exitTime = Instant.now();
+            String exitTag = "UNKNOWN";
+            String note = null;
+
+            Long gttId = buy.getKiteOcoGttId();
+            if (gttId != null) {
+                try {
+                    GTT gtt = kite.getGTT(gttId.intValue());
+                    if (gtt != null && gtt.orders != null) {
+                        for (int i = 0; i < gtt.orders.size(); i++) {
+                            GTT.GTTOrder leg = gtt.orders.get(i);
+                            if (leg == null || leg.result == null) continue;
+                            GTT.GTTOrderResult or = leg.result.orderResult;
+                            if (or == null || or.orderId == null || or.orderId.isBlank()) continue;
+                            exitOrderId = or.orderId;
+                            exitTag = (i == 0) ? "SL" : "TGT";
+                            // Prefer triggeredAtPrice (what Kite recorded at trigger).
+                            if (leg.result.triggeredAtPrice > 0) {
+                                exitPrice = leg.result.triggeredAtPrice;
+                            } else if (leg.price > 0) {
+                                exitPrice = (double) leg.price;
+                            }
+                            // Enrich with the actual COMPLETE fill from order history.
+                            try {
+                                List<Order> hist = kite.getOrderHistory(exitOrderId);
+                                for (Order h : hist) {
+                                    if (!"COMPLETE".equalsIgnoreCase(h.status)) continue;
+                                    double avg = parseD(h.averagePrice);
+                                    if (avg > 0) exitPrice = avg;
+                                    if (h.orderTimestamp != null) {
+                                        exitTime = h.orderTimestamp.toInstant();
+                                    }
+                                    break;
+                                }
+                            } catch (Throwable ohEx) {
+                                log.debug("reconcile {}: getOrderHistory({}) failed: {}",
+                                        sym, exitOrderId, ohEx.getMessage());
+                            }
+                            break;
+                        }
+                    }
+                } catch (Throwable t) {
+                    log.warn("reconcile: getGTT({}) failed for {}: {}",
+                            gttId, sym, t.getMessage());
+                }
+            }
+
+            if (exitPrice == null || exitPrice <= 0) {
+                // Fallback: assume the SL leg fired (statistically more common
+                // than TGT in a losing session) and use the recorded SL price.
+                Double sl = buy.getStopLossPrice();
+                if (sl != null && sl > 0) {
+                    exitPrice = sl;
+                    exitTag = "SL_APPROX";
+                    note = "Exit price approximated from recorded SL — GTT lookup unavailable.";
+                } else {
+                    exitPrice = 0.0;
+                    exitTag = "UNKNOWN";
+                    note = "Exit price unknown — GTT not found and no SL recorded.";
+                }
+            }
+
+            String reason = "Auto-reconciled: OCO " + exitTag
+                    + " triggered on Kite; position no longer in holdings/positions."
+                    + (note == null ? "" : " " + note);
+            OrderRecord sell = new OrderRecord(exitTime, sym, "SELL",
+                    nullSafe(buy.getIndicator()),
+                    "MARKET", exitOrderId, null, reason);
+            sell.setStatus("EXTERNALLY_CLOSED");
+            sell.setFilledQty(qty);
+            sell.setAvgFillPrice(exitPrice);
+            sell.setSector(buy.getSector());
+            sell.setIndustry(buy.getIndustry());
+            sell.setAlertName(buy.getAlertName());
+            repo.save(sell);
+            imported++;
+            log.info("Reconciled externally-closed position: {} qty={} exit={} tag={} (gtt={})",
+                    sym, qty, exitPrice, exitTag, gttId);
+        }
+        if (imported > 0) log.info("Reconciled {} externally-closed positions.", imported);
         return imported;
     }
 
