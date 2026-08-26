@@ -36,11 +36,12 @@ public class DailyLoginReminder {
 
     @EventListener(ApplicationReadyEvent.class)
     public void onStartup() {
-        String status = auth.isAuthenticated() ? "authenticated" : "NOT authenticated";
-        String msg = "🤖 OrderUp started (" + status + ")."
-                + (auth.isAuthenticated() ? "" : "\nLogin: " + auth.loginUrl());
-        log.info(msg);
-        telegram.send(msg);
+        // Startup notification + stale-token push are now handled centrally in
+        // KiteAuthService.onApplicationReady() (orderup-common) so every module
+        // — including orderup-chartink-app — gets it without wiring. We keep
+        // this listener as a placeholder for any orderup-app-specific startup
+        // work (currently none).
+        log.info("DailyLoginReminder ready — morning cron at 08:45 IST will pick up any stale-token case.");
     }
 
     /** 08:45 Mon–Fri IST. */
@@ -57,10 +58,9 @@ public class DailyLoginReminder {
             log.info("Morning check: token still valid, no reminder needed.");
             return;
         }
-        String msg = "☀️ Good morning! OrderUp needs a Kite login for today.\n"
-                + "Tap: " + auth.loginUrl();
         log.info("Sending morning login reminder.");
-        telegram.send(msg);
+        telegram.send("☀️ Good morning! OrderUp needs a Kite login for today.");
+        auth.pushLoginLinkToTelegram("🔐 Tap to log in:");
     }
 }
 

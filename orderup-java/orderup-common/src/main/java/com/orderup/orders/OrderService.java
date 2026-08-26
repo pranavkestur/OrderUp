@@ -1,6 +1,7 @@
 package com.orderup.orders;
 
 import com.orderup.config.TradingProperties;
+import com.orderup.auth.KiteAuthService;
 import com.orderup.marketdata.TickSizeService;
 import com.orderup.notify.TelegramNotifier;
 import com.zerodhatech.kiteconnect.KiteConnect;
@@ -40,6 +41,7 @@ public class OrderService {
     private final HoldingsService holdings;
     private final RuntimeFlagRepository flags;
     private final TickSizeService tickSizes;
+    private final org.springframework.beans.factory.ObjectProvider<KiteAuthService> authProvider;
 
     /**
      * Live toggle from the UI. When true, scans/signals still run but no order
@@ -56,7 +58,8 @@ public class OrderService {
     public OrderService(KiteConnect kite, TradingProperties trading,
                         OrderRecordRepository repo, PotentialOrderRepository potentialRepo,
                         TelegramNotifier notifier, HoldingsService holdings,
-                        RuntimeFlagRepository flags, TickSizeService tickSizes) {
+                        RuntimeFlagRepository flags, TickSizeService tickSizes,
+                        org.springframework.beans.factory.ObjectProvider<KiteAuthService> authProvider) {
         this.kite = kite;
         this.trading = trading;
         this.repo = repo;
@@ -65,6 +68,7 @@ public class OrderService {
         this.holdings = holdings;
         this.flags = flags;
         this.tickSizes = tickSizes;
+        this.authProvider = authProvider;
     }
 
     @PostConstruct
@@ -165,6 +169,7 @@ public class OrderService {
             return true;
         } catch (Throwable e) {
             String msg = describe(e);
+            maybeHandleAuthFailure(e, msg);
             if (msg.toLowerCase().contains("market") && msg.toLowerCase().contains("closed")) {
                 log.info("Markets closed for {} - placing GTT instead", symbol);
                 try {
@@ -210,6 +215,32 @@ public class OrderService {
             return "KiteException code=" + ke.code + " message=" + ke.message;
         }
         return e.getClass().getSimpleName() + ": " + e.getMessage();
+    }
+
+    /**
+     * If the underlying Kite error looks like an auth failure (403 / stale access token),
+     * flip {@link KiteAuthService} to unauthenticated and push a fresh login URL to
+     * Telegram so the user can re-login from their phone. Rate-limited inside
+     * {@link KiteAuthService#pushLoginLinkToTelegram(String)}.
+     */
+    private void maybeHandleAuthFailure(Throwable e, String describedMsg) {
+        boolean looksAuth = false;
+        if (e instanceof com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException ke) {
+            if (ke.code == 403) looksAuth = true;
+            String m = ke.message == null ? "" : ke.message.toLowerCase();
+            if (m.contains("api_key") || m.contains("access_token") || m.contains("token")) looksAuth = true;
+        }
+        String lower = describedMsg == null ? "" : describedMsg.toLowerCase();
+        if (lower.contains("code=403") || lower.contains("access_token") || lower.contains("api_key")) {
+            looksAuth = true;
+        }
+        if (!looksAuth) return;
+        try {
+            KiteAuthService auth = authProvider.getIfAvailable();
+            if (auth != null) auth.markUnauthenticated("Kite rejected request: " + describedMsg);
+        } catch (Throwable t) {
+            log.warn("Failed to push Kite login link to Telegram: {}", t.getMessage());
+        }
     }
 
     private String placeMarketOrder(String symbol, String side, int quantity) throws Throwable {

@@ -21,8 +21,12 @@ server:
 kite:
   api-key: ${KITE_API_KEY:}
   api-secret: ${KITE_API_SECRET:}
-  # Set this exact URL as the "Redirect URL" in your Kite app settings
-  redirect-url: http://localhost:8080/kite/callback
+  # Set this exact URL as the "Redirect URL" in your Kite app settings.
+  # Uses the reserved ngrok tunnel (see deploy/com.orderup.ngrok.plist) so the
+  # OAuth callback works end-to-end from a phone — tap the login link in
+  # Telegram, log in on kite.zerodha.com, Kite bounces back to this URL, and
+  # KiteAuthService.completeLogin(...) writes today's token to kite-token.json.
+  redirect-url: ${KITE_REDIRECT_URL:https://marbles-pamphlet-wages.ngrok-free.dev/kite/callback}
   user-id: ${KITE_USER_ID:}
   # Shared token file across all OrderUp apps on this box.
   # Path is relative to the launchd WorkingDirectory (orderup-app/), so this
