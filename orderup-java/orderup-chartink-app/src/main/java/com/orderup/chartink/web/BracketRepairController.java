@@ -5,6 +5,7 @@ import com.orderup.orders.OrderRecord;
 import com.orderup.orders.OrderRecordRepository;
 import com.orderup.orders.OrderService;
 import com.orderup.orders.OrderService.BracketResult;
+import com.orderup.pnl.PositionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -46,12 +47,48 @@ public class BracketRepairController {
     private final OrderRecordRepository repo;
     private final OrderService orders;
     private final TradingProperties trading;
+    private final PositionService positions;
 
     public BracketRepairController(OrderRecordRepository repo, OrderService orders,
-                                   TradingProperties trading) {
+                                   TradingProperties trading, PositionService positions) {
         this.repo = repo;
         this.orders = orders;
         this.trading = trading;
+        this.positions = positions;
+    }
+
+    /**
+     * Remove duplicate SELL rows produced by the historical race between
+     * parallel {@code /api/pnl/kpis?range=…} calls (each triggering
+     * syncExternalSells / reconcileExternallyClosed with no cross-request
+     * lock). Safe to run any time — a no-op when there are none.
+     */
+    @PostMapping("/dedupe-sells")
+    public Map<String, Object> dedupeSells() {
+        int removed = positions.dedupeSellRows();
+        return Map.of("removedDuplicates", removed);
+    }
+
+    /**
+     * Delete {@code EXTERNALLY_CLOSED} SELL rows produced by an earlier buggy
+     * run of the reconciler (pre-fix: a failed kite.getPositions() would
+     * cascade into false-positive closures of freshly-filled BUYs). Pass a
+     * comma-separated {@code symbols=} to target specific tickers, or omit
+     * to purge every reconciled row and let the (now safe) reconciler
+     * rebuild.
+     *
+     * <p>Example: {@code curl -X POST '.../admin/delete-reconciled-sells?symbols=BHEL,LENSKART'}
+     */
+    @PostMapping("/delete-reconciled-sells")
+    public Map<String, Object> deleteReconciledSells(
+            @RequestParam(required = false, defaultValue = "") String symbols) {
+        java.util.Set<String> syms = new java.util.HashSet<>();
+        for (String s : symbols.split(",")) {
+            String t = s.trim().toUpperCase();
+            if (!t.isEmpty()) syms.add(t);
+        }
+        int removed = positions.deleteReconciledSells(syms);
+        return Map.of("removed", removed, "targetSymbols", syms);
     }
 
     /**

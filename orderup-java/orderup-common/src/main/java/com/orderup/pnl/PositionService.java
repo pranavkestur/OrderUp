@@ -39,6 +39,18 @@ public class PositionService {
     private static final Logger log = LoggerFactory.getLogger(PositionService.class);
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
 
+    /**
+     * Minimum age of a BUY before {@link #reconcileExternallyClosed(String)}
+     * will consider it eligible for reconciliation. Guards against Kite's
+     * getPositions() lag: a BUY that fills at 09:25:07 may not surface in
+     * kite.getPositions().net for a minute or two, and if the reconciler
+     * runs in that window it would wrongly decide the position is "closed"
+     * and stamp a synthetic SELL. 15 minutes is comfortably longer than any
+     * propagation delay we've observed while still recovering an OCO exit
+     * on the same session.
+     */
+    private static final Duration MIN_RECONCILE_AGE = Duration.ofMinutes(15);
+
     private final OrderRecordRepository repo;
     private final PotentialOrderRepository potentialRepo;
     private final KiteConnect kite;
@@ -196,6 +208,28 @@ public class PositionService {
         Map<String, OrderRecord> latestBuy = latestBuyBySymbol(repo.findAll());
         if (latestBuy.isEmpty()) return List.of();
 
+        // OrderUp is the source of truth for what we bought/sold. Compute net
+        // qty per symbol from OrderRecords and drop anything whose net is <= 0.
+        // Without this, Kite's day-positions view — which for a same-day OCO
+        // exit reports netQuantity=-1 (sold from CNC holdings, no buy today) —
+        // would push the closed position back into Open Positions with a
+        // nonsensical negative qty. And a same-day round trip (BUY at 09:25,
+        // OCO fired at 09:31) leaves buyQty=1 sellQty=1 in Kite's day view;
+        // that's also fully closed and must not appear here.
+        Map<String, Integer> netAppQty = new HashMap<>();
+        for (OrderRecord o : repo.findAll()) {
+            if (o.getSymbol() == null) continue;
+            if (strategyFilter != null
+                    && !strategyFilter.equalsIgnoreCase(nullSafe(o.getIndicator()))) continue;
+            Integer q = o.getFilledQty();
+            if (q == null || q <= 0) continue;
+            int delta = "BUY".equalsIgnoreCase(o.getSide()) ? q
+                     : "SELL".equalsIgnoreCase(o.getSide()) ? -q
+                     : 0;
+            if (delta == 0) continue;
+            netAppQty.merge(o.getSymbol().toUpperCase(Locale.ROOT), delta, Integer::sum);
+        }
+
         Map<String, OpenPosition> rows = new LinkedHashMap<>();
 
         try {
@@ -206,11 +240,14 @@ public class PositionService {
                 String sym = p.tradingSymbol.toUpperCase(Locale.ROOT);
                 OrderRecord src = latestBuy.get(sym);
                 if (src == null) continue;
+                if (netAppQty.getOrDefault(sym, 0) <= 0) continue; // fully closed per our books
                 double buyPx  = p.buyPrice  != null && p.buyPrice > 0 ? p.buyPrice
                               : p.averagePrice > 0 ? p.averagePrice : 0.0;
                 double sellPx = p.sellPrice != null && p.sellPrice > 0 && p.sellQuantity > 0 ? p.sellPrice : 0.0;
                 double ltp    = p.lastPrice != null ? p.lastPrice : 0.0;
-                int    qty    = p.netQuantity != 0 ? p.netQuantity : p.buyQuantity - p.sellQuantity;
+                // Prefer our own net qty over Kite's day-view netQuantity, which
+                // can be negative for CNC OCO exits (see block comment above).
+                int    qty    = netAppQty.getOrDefault(sym, 0);
                 rows.put(sym, new OpenPosition(sym, nullSafe(src.getIndicator()),
                         qty, buyPx, sellPx, ltp, 0.0, 0.0));
             }
@@ -223,6 +260,7 @@ public class PositionService {
             if (rows.containsKey(sym)) continue;
             OrderRecord src = latestBuy.get(sym);
             if (src == null) continue;
+            if (netAppQty.getOrDefault(sym, 0) <= 0) continue; // fully closed per our books
             HoldingsService.Snapshot h = entry.getValue();
             rows.put(sym, new OpenPosition(sym, nullSafe(src.getIndicator()),
                     h.quantity(), h.avgPrice(), 0.0, 0.0, 0.0, 0.0));
@@ -594,6 +632,18 @@ public class PositionService {
     }
 
     /**
+     * Cross-request mutex for reconciliation writes. The dashboard fetches
+     * {@code /api/pnl/kpis?range=today|week|month|all} in parallel, and each
+     * call ends up running syncExternalSells + reconcileExternallyClosed.
+     * Without a lock, all four requests read the same "no SELL exists yet"
+     * snapshot and each inserts its own copy of the same OCO exit — leading
+     * to 4 duplicate SELL rows per closed position (observed in the wild).
+     * A single JVM-scoped monitor is enough because the Chartink app is a
+     * single-writer service.
+     */
+    private final Object reconcileLock = new Object();
+
+    /**
      * When our bracket OCO fires, the resulting SELL originates on the Kite
      * side (not from OrderUp) so it never gets written to {@link OrderRecord}.
      * Scan Kite's orderbook for COMPLETE SELLs whose symbol matches one of our
@@ -601,9 +651,16 @@ public class PositionService {
      * rows so the P&L pipeline and closed-trades table pick them up.
      *
      * <p>Idempotent — we key on Kite's {@code order_id} and skip if we've
-     * already imported it.
+     * already imported it. Guarded by {@link #reconcileLock} so parallel
+     * dashboard callers don't race and produce duplicate rows.
      */
     public int syncExternalSells(String strategyFilter) {
+        synchronized (reconcileLock) {
+            return doSyncExternalSells(strategyFilter);
+        }
+    }
+
+    private int doSyncExternalSells(String strategyFilter) {
         List<OrderRecord> existing = repo.findAll();
         Set<String> ourOrderIds = new HashSet<>();
         Set<String> trackedSymbols = new HashSet<>();
@@ -677,6 +734,87 @@ public class PositionService {
      * <p>Idempotent: symbols that already have any SELL record are skipped.
      */
     public int reconcileExternallyClosed(String strategyFilter) {
+        synchronized (reconcileLock) {
+            return doReconcileExternallyClosed(strategyFilter);
+        }
+    }
+
+    /**
+     * Delete SELL rows that {@link #reconcileExternallyClosed} produced
+     * incorrectly (see the pre-fix bug where a failed
+     * {@code kite.getPositions()} caused every fresh BUY to be reconciled).
+     * Only removes rows with {@code status = EXTERNALLY_CLOSED} — regular
+     * COMPLETE SELLs synced from the Kite orderbook are never touched.
+     * Optionally filter to specific symbols; pass an empty collection to
+     * purge every EXTERNALLY_CLOSED SELL (useful when the reconciler had a
+     * bad day and you want to rebuild from scratch).
+     */
+    public int deleteReconciledSells(java.util.Collection<String> symbolsUpper) {
+        synchronized (reconcileLock) {
+            int removed = 0;
+            List<OrderRecord> all = repo.findAll();
+            for (OrderRecord o : all) {
+                if (!"SELL".equalsIgnoreCase(o.getSide())) continue;
+                if (!"EXTERNALLY_CLOSED".equalsIgnoreCase(o.getStatus())) continue;
+                if (symbolsUpper != null && !symbolsUpper.isEmpty()) {
+                    String sym = o.getSymbol() == null ? "" : o.getSymbol().toUpperCase(Locale.ROOT);
+                    if (!symbolsUpper.contains(sym)) continue;
+                }
+                log.info("Deleting reconciled SELL id={} sym={} placedAt={} avg={}",
+                        o.getId(), o.getSymbol(), o.getPlacedAt(), o.getAvgFillPrice());
+                repo.delete(o);
+                removed++;
+            }
+            return removed;
+        }
+    }
+
+    /**
+     * One-shot cleanup for the duplicate-SELL rows produced by a historical
+     * race in {@link #syncExternalSells} / {@link #reconcileExternallyClosed}
+     * (both are now serialised via {@link #reconcileLock}, but rows written
+     * before that fix persist). Groups SELLs by
+     * {@code (symbol, side, kiteOrderId-or-"RECON", filledQty, avgFillPrice)}
+     * and keeps only the earliest row per group; deletes the rest. Returns
+     * the number of rows removed. Safe to run any time — a no-op when there
+     * are no dupes.
+     */
+    public int dedupeSellRows() {
+        synchronized (reconcileLock) {
+            List<OrderRecord> all = repo.findAll();
+            // Group by a canonical fingerprint that treats "same OCO exit"
+            // regardless of whether kiteOrderId was populated (external sync)
+            // or null (SL_APPROX reconciler fallback).
+            Map<String, List<OrderRecord>> groups = new LinkedHashMap<>();
+            for (OrderRecord o : all) {
+                if (!"SELL".equalsIgnoreCase(o.getSide())) continue;
+                if (o.getSymbol() == null) continue;
+                String key = String.join("|",
+                        o.getSymbol().toUpperCase(Locale.ROOT),
+                        o.getKiteOrderId() == null ? "RECON" : o.getKiteOrderId(),
+                        String.valueOf(o.getFilledQty()),
+                        String.valueOf(o.getAvgFillPrice()));
+                groups.computeIfAbsent(key, k -> new ArrayList<>()).add(o);
+            }
+            int removed = 0;
+            for (var entry : groups.entrySet()) {
+                List<OrderRecord> rows = entry.getValue();
+                if (rows.size() <= 1) continue;
+                rows.sort(Comparator.comparing(OrderRecord::getPlacedAt));
+                // Keep first, delete the rest.
+                for (int i = 1; i < rows.size(); i++) {
+                    repo.delete(rows.get(i));
+                    removed++;
+                }
+                log.info("Dedupe SELL: kept id={} for {} (removed {} duplicates)",
+                        rows.get(0).getId(), rows.get(0).getSymbol(), rows.size() - 1);
+            }
+            if (removed > 0) log.info("Dedupe pass removed {} duplicate SELL rows.", removed);
+            return removed;
+        }
+    }
+
+    private int doReconcileExternallyClosed(String strategyFilter) {
         List<OrderRecord> all = repo.findAll();
         Map<String, OrderRecord> latestBuy = latestBuyBySymbol(all);
         if (latestBuy.isEmpty()) return 0;
@@ -689,18 +827,49 @@ public class PositionService {
         }
 
         // Union of "currently owned" symbols per Kite: net day-positions + holdings.
+        //
+        // CRITICAL: if kite.getPositions() fails or returns null we MUST abort.
+        // Same-day CNC BUYs live in getPositions().net (buyQty > 0) — they do
+        // NOT appear in getHoldings() until T+1 settlement. Falling through to
+        // holdings-only would incorrectly treat every fresh BUY as "not owned"
+        // and reconcile it into a bogus EXTERNALLY_CLOSED SELL. This exact
+        // false-positive nuked today's BHEL/LENSKART BUYs at 09:31 IST, ~6
+        // minutes after fill, when Kite's positions call temporarily failed.
         Set<String> owned = new HashSet<>();
+        boolean positionsOk = false;
         try {
             Map<String, List<Position>> pos = kite.getPositions();
-            List<Position> net = pos == null ? List.of() : pos.getOrDefault("net", List.of());
-            for (Position p : net) {
-                if (p.tradingSymbol == null) continue;
-                if (p.netQuantity > 0) owned.add(p.tradingSymbol.toUpperCase(Locale.ROOT));
+            if (pos != null) {
+                positionsOk = true;
+                List<Position> net = pos.getOrDefault("net", List.of());
+                for (Position p : net) {
+                    if (p.tradingSymbol == null) continue;
+                    // Treat any symbol with same-day activity (buy or hold) as
+                    // "still visible on Kite" and therefore NOT eligible for
+                    // reconciliation. netQuantity>0 means net long today;
+                    // buyQuantity>0 means we opened it today even if the
+                    // position was later trimmed. Either way, hands off.
+                    if (p.netQuantity > 0 || p.buyQuantity > 0) {
+                        owned.add(p.tradingSymbol.toUpperCase(Locale.ROOT));
+                    }
+                }
             }
-        } catch (Throwable ignored) {
-            // Non-fatal — falling through to holdings-only is fine.
+        } catch (Throwable t) {
+            log.warn("reconcileExternallyClosed: kite.getPositions() failed ({}), aborting to avoid " +
+                    "false-positive reconciliations of same-day BUYs.", t.getMessage());
+            return 0;
+        }
+        if (!positionsOk) {
+            log.warn("reconcileExternallyClosed: kite.getPositions() returned null, aborting.");
+            return 0;
         }
         for (String s : holdings.snapshot().keySet()) owned.add(s.toUpperCase(Locale.ROOT));
+
+        // Defensive lower bound on BUY age: a BUY that filled in the last
+        // MIN_RECONCILE_AGE minutes is off-limits. This guards against Kite
+        // lag between placeOrder() confirming and the position showing up in
+        // getPositions() (observed race window: seconds to a couple of minutes).
+        Instant reconcileCutoff = Instant.now().minus(MIN_RECONCILE_AGE);
 
         int imported = 0;
         for (var e : latestBuy.entrySet()) {
@@ -710,6 +879,11 @@ public class PositionService {
             if (hasSell.contains(sym)) continue;
             if (strategyFilter != null
                     && !strategyFilter.equalsIgnoreCase(nullSafe(buy.getIndicator()))) continue;
+            if (buy.getPlacedAt() != null && buy.getPlacedAt().isAfter(reconcileCutoff)) {
+                log.debug("reconcile: skipping {} — BUY placed {} is younger than cutoff {}",
+                        sym, buy.getPlacedAt(), MIN_RECONCILE_AGE);
+                continue;
+            }
 
             int qty = buy.getFilledQty() != null ? buy.getFilledQty() : 0;
             if (qty <= 0) continue;
