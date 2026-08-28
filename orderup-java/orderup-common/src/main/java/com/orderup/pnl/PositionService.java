@@ -10,6 +10,7 @@ import com.zerodhatech.models.GTT;
 import com.zerodhatech.models.LTPQuote;
 import com.zerodhatech.models.Order;
 import com.zerodhatech.models.Position;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -66,7 +67,63 @@ public class PositionService {
         this.holdings = holdings;
     }
 
+    /**
+     * Auto-backfill {@code exitType} on any SELL rows that were persisted
+     * before the exit-classification feature landed (or by any code path
+     * that somehow skipped stamping it). Idempotent — a no-op once every
+     * SELL row has a non-null tag. Runs asynchronously-ish (short DB scan)
+     * on service start so the dashboard never shows dashes for legacy rows
+     * beyond the first request after a boot.
+     *
+     * <p>Wrapped in try/catch so a DB glitch here never blocks the
+     * application from coming up healthy.
+     */
+    @PostConstruct
+    void backfillExitTypesOnBoot() {
+        try {
+            int n = backfillExitTypes();
+            if (n > 0) log.info("Startup exitType backfill: tagged {} legacy SELL rows.", n);
+        } catch (Throwable t) {
+            log.warn("Startup exitType backfill failed (non-fatal): {}", t.getMessage());
+        }
+    }
+
     public void syncTodaysFills() {
+        // Debounce: skip if we already hit Kite within the cooldown window.
+        // The dashboard used to fire syncTodaysFills() from every KPI /
+        // closed-trades / summary call — including on every sector/market-cap
+        // chip toggle — which meant one kite.getOrders() round-trip per click
+        // (300-800ms observed). Fill data doesn't change more than a couple
+        // times a minute in practice, so a short throttle is more than safe.
+        // Full sync still happens on order placement / reconciliation paths
+        // that call syncTodaysFillsForce() directly.
+        long now = System.currentTimeMillis();
+        long last = lastFillSyncMs;
+        if (now - last < FILL_SYNC_COOLDOWN_MS) return;
+        // Compare-and-set so the first caller in a burst does the work and
+        // parallel callers short-circuit — no lock, no double round-trip.
+        synchronized (fillSyncLock) {
+            if (now - lastFillSyncMs < FILL_SYNC_COOLDOWN_MS) return;
+            doSyncTodaysFills();
+            lastFillSyncMs = System.currentTimeMillis();
+        }
+    }
+
+    /** Force a Kite orderbook fetch bypassing the debounce — used on write paths. */
+    public void syncTodaysFillsForce() {
+        synchronized (fillSyncLock) {
+            doSyncTodaysFills();
+            lastFillSyncMs = System.currentTimeMillis();
+        }
+    }
+
+    private volatile long lastFillSyncMs = 0L;
+    private final Object fillSyncLock = new Object();
+    /** How long to cache Kite's orderbook. 5s = at most 12 fetches / minute
+     *  even under a rapid-click storm; still fresh enough for the dashboard. */
+    private static final long FILL_SYNC_COOLDOWN_MS = 5_000;
+
+    private void doSyncTodaysFills() {
         Map<String, Fill> fills = fetchFillMap();
         if (fills.isEmpty()) return;
         List<OrderRecord> all = repo.findAll();
@@ -294,6 +351,7 @@ public class PositionService {
             if (buy != null) {
                 p.sector        = buy.getSector();
                 p.industry      = buy.getIndustry();
+                p.marketCap     = buy.getMarketCap();
                 p.alertName     = buy.getAlertName();
                 p.stopLossPrice = buy.getStopLossPrice();
                 p.targetPrice   = buy.getTargetPrice();
@@ -442,6 +500,8 @@ public class PositionService {
         // Chartink-bracket fields, populated from the opening BUY's OrderRecord. Nullable.
         public String sector;
         public String industry;
+        /** AMFI market-cap category — LARGE_CAP / MID_CAP / SMALL_CAP / null. */
+        public String marketCap;
         public String alertName;
         public Double stopLossPrice;
         public Double targetPrice;
@@ -478,6 +538,7 @@ public class PositionService {
         public String alertName;
         public String sector;
         public String industry;
+        public String marketCap;
         public Double stopLossPrice;
         public Double targetPrice;
         public Long   kiteOcoGttId;
@@ -498,6 +559,7 @@ public class PositionService {
             v.alertName = o.getAlertName();
             v.sector    = o.getSector();
             v.industry  = o.getIndustry();
+            v.marketCap = o.getMarketCap();
             v.stopLossPrice = o.getStopLossPrice();
             v.targetPrice   = o.getTargetPrice();
             v.kiteOcoGttId  = o.getKiteOcoGttId();
@@ -548,11 +610,23 @@ public class PositionService {
             Instant exitAt,  double exitPx,
             int quantity,
             double pnl, double pnlPct,
-            long holdingHours
+            long holdingHours,
+            String exitType,
+            Long sellOrderId,
+            Double stopLossPrice,
+            Double targetPrice,
+            String marketCap
     ) {}
 
     /** Sector realized-P&L rollup for the sector-performance panel. */
     public record SectorRow(String sector, double realizedPnl, int trades, int wins, int losses) {}
+
+    /**
+     * Market-cap realized-P&L rollup — mirrors {@link SectorRow} but slices
+     * by {@code LARGE_CAP / MID_CAP / SMALL_CAP / UNKNOWN}. Powers the
+     * "Market cap performance" panel on the dashboard.
+     */
+    public record MarketCapRow(String marketCap, double realizedPnl, int trades, int wins, int losses) {}
 
     /**
      * FIFO-match every BUY→SELL pair within the range for the given strategy,
@@ -584,6 +658,8 @@ public class PositionService {
                     int remaining = q;
                     Instant exitAt = o.getPlacedAt();
                     double exitPx = p;
+                    String exitType = o.getExitType();
+                    Long sellId = o.getId();
                     while (remaining > 0 && !longs.isEmpty()) {
                         OpenLot lot = longs.peekFirst();
                         int take = Math.min(lot.qty, remaining);
@@ -601,7 +677,11 @@ public class PositionService {
                                     lot.src.getAlertName(),
                                     lot.src.getPlacedAt(), lot.price,
                                     exitAt, exitPx,
-                                    take, tradePnl, tradePnlPct, hours
+                                    take, tradePnl, tradePnlPct, hours,
+                                    exitType, sellId,
+                                    lot.src.getStopLossPrice(),
+                                    lot.src.getTargetPrice(),
+                                    lot.src.getMarketCap()
                             ));
                         }
                         lot.qty -= take;
@@ -628,6 +708,30 @@ public class PositionService {
         List<SectorRow> out = new ArrayList<>();
         agg.forEach((k, v) -> out.add(new SectorRow(k, v[0], (int) v[1], (int) v[2], (int) v[3])));
         out.sort(Comparator.comparingDouble(SectorRow::realizedPnl).reversed());
+        return out;
+    }
+
+    /**
+     * Group {@link #closedTrades} by AMFI market-cap category
+     * ({@code LARGE_CAP / MID_CAP / SMALL_CAP}), summing realized P&L and
+     * counts. Trades whose symbol isn't in the AMFI list (fresh IPOs, or
+     * user hasn't refreshed the classification file) bucket as {@code UNKNOWN}.
+     */
+    public List<MarketCapRow> marketCapPerformance(Instant from, Instant to, String strategyFilter) {
+        Map<String, double[]> agg = new LinkedHashMap<>();
+        for (ClosedTrade t : closedTrades(from, to, strategyFilter)) {
+            String mc = (t.marketCap() == null || t.marketCap().isBlank()) ? "UNKNOWN" : t.marketCap();
+            double[] r = agg.computeIfAbsent(mc, k -> new double[4]);
+            r[0] += t.pnl();
+            r[1] += 1;
+            if (t.pnl() > 0) r[2] += 1; else if (t.pnl() < 0) r[3] += 1;
+        }
+        List<MarketCapRow> out = new ArrayList<>();
+        agg.forEach((k, v) -> out.add(new MarketCapRow(k, v[0], (int) v[1], (int) v[2], (int) v[3])));
+        // Preferred display order: LARGE → MID → SMALL → UNKNOWN, then by P&L.
+        Map<String, Integer> rank = Map.of("LARGE_CAP", 0, "MID_CAP", 1, "SMALL_CAP", 2, "UNKNOWN", 3);
+        out.sort(Comparator.comparingInt((MarketCapRow r) -> rank.getOrDefault(r.marketCap(), 99))
+                .thenComparing(Comparator.comparingDouble(MarketCapRow::realizedPnl).reversed()));
         return out;
     }
 
@@ -693,7 +797,10 @@ public class PositionService {
                 rec.setStatus("COMPLETE");
                 rec.setFilledQty(filled);
                 rec.setAvgFillPrice(avg);
-                // Inherit sector/industry/alert from the matching BUY for tidy audit.
+                // Inherit sector/industry/alert from the matching BUY for tidy audit,
+                // and classify the exit type by comparing fill price against the
+                // BUY's stopLossPrice / targetPrice.
+                final double fillPx = avg;
                 existing.stream()
                         .filter(x -> "BUY".equalsIgnoreCase(x.getSide()))
                         .filter(x -> sym.equalsIgnoreCase(x.getSymbol()))
@@ -702,7 +809,10 @@ public class PositionService {
                             rec.setSector(buy.getSector());
                             rec.setIndustry(buy.getIndustry());
                             rec.setAlertName(buy.getAlertName());
+                            rec.setExitType(classifyExit(buy.getStopLossPrice(),
+                                    buy.getTargetPrice(), fillPx));
                         });
+                if (rec.getExitType() == null) rec.setExitType("UNKNOWN");
                 repo.save(rec);
                 imported++;
             }
@@ -711,6 +821,30 @@ public class PositionService {
         }
         if (imported > 0) log.info("Imported {} external SELLs from Kite orderbook", imported);
         return imported;
+    }
+
+    /**
+     * Classify a SELL fill by proximity to the source BUY's recorded SL / TGT.
+     * Uses a small tolerance (max of 0.25% and 5 ticks of 0.05) so a market
+     * SELL that slipped a paisa past the OCO trigger still classifies as SL
+     * or TGT rather than MANUAL. Returns {@code null} if neither SL nor TGT
+     * were recorded on the BUY (caller can default to {@code MANUAL} or
+     * {@code UNKNOWN} depending on context).
+     */
+    static String classifyExit(Double sl, Double tgt, double fillPx) {
+        if (fillPx <= 0) return null;
+        double tol = Math.max(fillPx * 0.0025, 0.05 * 5);
+        boolean nearSL  = sl  != null && sl  > 0 && Math.abs(fillPx - sl)  <= tol;
+        boolean nearTGT = tgt != null && tgt > 0 && Math.abs(fillPx - tgt) <= tol;
+        // Also treat "fill materially below SL" as SL (gap-down through the
+        // trigger) and "materially above TGT" as TGT (gap-up past the target).
+        if (!nearSL  && sl  != null && sl  > 0 && fillPx <= sl)  nearSL  = true;
+        if (!nearTGT && tgt != null && tgt > 0 && fillPx >= tgt) nearTGT = true;
+        if (nearSL && !nearTGT) return "SL";
+        if (nearTGT && !nearSL) return "TGT";
+        if (nearSL && nearTGT)  return "UNKNOWN"; // shouldn't happen (SL<buy<TGT)
+        // Neither leg is close — most likely a manual square-off from Kite web/app.
+        return (sl != null || tgt != null) ? "MANUAL" : null;
     }
 
     /**
@@ -863,6 +997,23 @@ public class PositionService {
             log.warn("reconcileExternallyClosed: kite.getPositions() returned null, aborting.");
             return 0;
         }
+        // Second guard: if HoldingsService has never had a successful refresh
+        // in this JVM, its snapshot() is empty for a bogus reason (Kite auth
+        // still validating, network blip during boot, rate-limit at market
+        // open) and treating it as authoritative would cause every persisted
+        // BUY to look "not owned" — synthesising phantom SL_APPROX SELLs.
+        // This is exactly the failure mode that closed LGEINDIA / BHEL /
+        // TMCV / EICHERMOT at 08:57 IST on 28 Aug 2026: pre-market boot,
+        // empty holdings cache, positions.net legitimately empty (no day
+        // trades yet), reconciler wrongly declared all 4 held CNC positions
+        // closed. Force a fresh refresh here and abort if it still hasn't
+        // loaded. Cheap: refresh() is a single Kite call.
+        holdings.refreshIfStale(5_000);
+        if (!holdings.hasEverLoaded()) {
+            log.warn("reconcileExternallyClosed: HoldingsService has never loaded successfully, " +
+                    "aborting to avoid phantom SELLs on genuinely-held CNC positions.");
+            return 0;
+        }
         for (String s : holdings.snapshot().keySet()) owned.add(s.toUpperCase(Locale.ROOT));
 
         // Defensive lower bound on BUY age: a BUY that filled in the last
@@ -964,6 +1115,7 @@ public class PositionService {
             sell.setSector(buy.getSector());
             sell.setIndustry(buy.getIndustry());
             sell.setAlertName(buy.getAlertName());
+            sell.setExitType(exitTag);  // "SL" | "TGT" | "SL_APPROX" | "UNKNOWN"
             repo.save(sell);
             imported++;
             log.info("Reconciled externally-closed position: {} qty={} exit={} tag={} (gtt={})",
@@ -1081,6 +1233,82 @@ public class PositionService {
         }
         double base = Math.max(capitalBase, 1.0);
         return (maxDdRupees / base) * 100.0;
+    }
+
+    // =============== Exit classification: aggregates + backfill ===============
+
+    /**
+     * Aggregate SELL exit stats over {@code [from, to]} for the given strategy.
+     * Powers the {@code /api/pnl/exit-stats} dashboard card. Reads directly
+     * from persisted SELL rows (already tagged with {@code exitType} at write
+     * time by {@link #syncExternalSells} / {@link #reconcileExternallyClosed}
+     * — historic rows can be tagged retroactively via {@link #backfillExitTypes()}).
+     */
+    public ExitStats exitStats(Instant from, Instant to, String strategyFilter) {
+        int sl = 0, tgt = 0, manual = 0, other = 0;
+        double slPnlSum = 0, tgtPnlSum = 0;
+        int slPnlN = 0, tgtPnlN = 0;
+        for (ClosedTrade t : closedTrades(from, to, strategyFilter)) {
+            String tag = t.exitType() == null ? "UNKNOWN" : t.exitType().toUpperCase(Locale.ROOT);
+            switch (tag) {
+                case "SL", "SL_APPROX" -> { sl++; slPnlSum += t.pnlPct(); slPnlN++; }
+                case "TGT"             -> { tgt++; tgtPnlSum += t.pnlPct(); tgtPnlN++; }
+                case "MANUAL"          -> manual++;
+                default                -> other++;
+            }
+        }
+        int total = sl + tgt + manual + other;
+        double slHitRate = total > 0 ? (sl * 1.0) / total : 0.0;
+        double avgSlLoss = slPnlN > 0 ? slPnlSum / slPnlN : 0.0;
+        double avgTgtGain = tgtPnlN > 0 ? tgtPnlSum / tgtPnlN : 0.0;
+        return new ExitStats(sl, tgt, manual, other, slHitRate, avgSlLoss, avgTgtGain);
+    }
+
+    public record ExitStats(int slCount, int tgtCount, int manualCount, int otherCount,
+                            double slHitRate, double avgSlLoss, double avgTgtGain) {}
+
+    /**
+     * One-shot: for every SELL row that doesn't yet carry an {@code exitType},
+     * try to classify it against the source BUY's SL / TGT prices. Rows we
+     * still can't classify are marked {@code MANUAL} (no SL/TGT recorded
+     * means it wasn't a bracket exit). Returns the count of rows updated.
+     */
+    public int backfillExitTypes() {
+        List<OrderRecord> all = repo.findAll();
+        // Group BUYs by symbol for lookup (latest first).
+        Map<String, List<OrderRecord>> buysBySym = new HashMap<>();
+        for (OrderRecord o : all) {
+            if (!"BUY".equalsIgnoreCase(o.getSide()) || o.getSymbol() == null) continue;
+            buysBySym.computeIfAbsent(o.getSymbol().toUpperCase(Locale.ROOT),
+                    k -> new ArrayList<>()).add(o);
+        }
+        buysBySym.values().forEach(list -> list.sort(Comparator.comparing(OrderRecord::getPlacedAt)));
+
+        int updated = 0;
+        for (OrderRecord o : all) {
+            if (!"SELL".equalsIgnoreCase(o.getSide())) continue;
+            if (o.getExitType() != null && !o.getExitType().isBlank()) continue;
+            if (o.getAvgFillPrice() == null || o.getAvgFillPrice() <= 0) continue;
+            List<OrderRecord> buys = buysBySym.getOrDefault(
+                    o.getSymbol() == null ? "" : o.getSymbol().toUpperCase(Locale.ROOT),
+                    List.of());
+            // Best source BUY: the latest BUY placed before this SELL.
+            OrderRecord src = null;
+            for (OrderRecord b : buys) {
+                if (b.getPlacedAt() == null || b.getPlacedAt().isAfter(o.getPlacedAt())) break;
+                src = b;
+            }
+            String tag = null;
+            if (src != null) {
+                tag = classifyExit(src.getStopLossPrice(), src.getTargetPrice(), o.getAvgFillPrice());
+            }
+            if (tag == null) tag = "MANUAL";
+            o.setExitType(tag);
+            repo.save(o);
+            updated++;
+        }
+        if (updated > 0) log.info("Backfilled exitType on {} SELL rows.", updated);
+        return updated;
     }
 
     /** Mutable open-lot for the FIFO walk; carries the source BUY for metadata. */

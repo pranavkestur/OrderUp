@@ -67,8 +67,11 @@
   .range-card .rc-value { font-size:18px; font-weight:700; margin-top:5px; font-variant-numeric:tabular-nums }
   .range-card .rc-sub   { font-size:12px; color:var(--dim); margin-top:2px }
 
-  /* Charts row */
-  .charts-grid { display:grid; grid-template-columns:2fr 1fr; gap:16px; margin-bottom:20px }
+  /* Charts row — three columns: equity trend (widest for the time-series
+     shape), market-cap doughnut in the middle (compact, glanceable), sector
+     diverging bars on the right (needs the extra width for label wrapping). */
+  .charts-grid { display:grid; grid-template-columns:1.6fr 1fr 1.2fr; gap:16px; margin-bottom:20px }
+  @media (max-width:1400px) { .charts-grid { grid-template-columns:1.4fr 1fr 1.2fr } }
   @media (max-width:1100px) { .charts-grid { grid-template-columns:1fr } }
 
   .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px; margin-bottom:20px }
@@ -85,6 +88,34 @@
   .sector-pnl { text-align:right; font-variant-numeric:tabular-nums; font-weight:600; font-size:12px }
   .sector-meta { color:var(--dim); font-size:10px }
 
+  /* Diverging sector bar (profit right in green, loss left in red from a
+     central 0-axis). Left and right halves flex proportionally so the eye
+     immediately sees direction + magnitude vs the current abs-value layout
+     which erased the sign. */
+  .div-list { display:flex; flex-direction:column; gap:8px; max-height:320px; overflow-y:auto }
+  .div-row  { display:grid; grid-template-columns:100px 1fr 80px; gap:8px; align-items:center;
+              font-size:13px; cursor:pointer; padding:3px 4px; border-radius:4px }
+  .div-row:hover { background:rgba(91,157,255,.08) }
+  .div-row.active { background:rgba(91,157,255,.12) }
+  .div-track { display:flex; height:8px; align-items:center; background:transparent }
+  .div-track .half { flex:1 1 0; display:flex; height:100%; overflow:hidden }
+  .div-track .half.left  { justify-content:flex-end; border-right:1px solid var(--border) }
+  .div-track .half.right { justify-content:flex-start; border-left:none }
+  .div-track .fill { height:100%; border-radius:3px }
+  .div-track .fill.pos { background:linear-gradient(90deg, rgba(61,220,132,.35), var(--green)) }
+  .div-track .fill.neg { background:linear-gradient(270deg, rgba(255,92,124,.35), var(--red)) }
+  .div-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  .div-meta  { color:var(--dim); font-size:10px }
+
+  /* Doughnut center label (net realized P&L overlaid on the market-cap
+     chart's hollow center). Positioned absolutely inside .chart-box.donut. */
+  .chart-box.donut { height:260px }
+  .donut-center { position:absolute; inset:0; display:flex; flex-direction:column;
+                  align-items:center; justify-content:center; pointer-events:none }
+  .donut-center .label { font-size:10px; color:var(--dim); text-transform:uppercase; letter-spacing:.6px }
+  .donut-center .value { font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; margin-top:4px }
+  .donut-center .sub   { font-size:11px; color:var(--dim); margin-top:3px }
+
   /* Tables */
   table { width:100%; border-collapse:collapse; font-size:13px }
   th { color:var(--dim); font-weight:600; text-align:left; padding:9px 8px; border-bottom:1px solid var(--border);
@@ -96,6 +127,20 @@
   .row-symbol { font-weight:700; color:var(--text) }
   .sector-pill { display:inline-block; font-size:10px; padding:2px 7px; border-radius:8px;
                  background:rgba(192,132,252,.12); color:var(--purple); border:1px solid rgba(192,132,252,.3) }
+  /* Market-cap category pill — colour-codes AMFI Large/Mid/Small so the eye can
+     scan the "cap mix" of open positions & closed trades at a glance. */
+  .mcap-pill { display:inline-block; font-size:10px; padding:2px 7px; border-radius:8px;
+               font-weight:700; letter-spacing:.3px }
+  .mcap-pill.large { background:rgba(91,157,255,.14); color:var(--blue);   border:1px solid rgba(91,157,255,.35) }
+  .mcap-pill.mid   { background:rgba(245,196,81,.14); color:var(--yellow); border:1px solid rgba(245,196,81,.35) }
+  .mcap-pill.small { background:rgba(255,92,124,.14); color:var(--red);    border:1px solid rgba(255,92,124,.35) }
+  .mcap-pill.unk   { background:rgba(255,255,255,.05); color:var(--muted); border:1px solid var(--border) }
+  /* Exit-type badges on Closed Trades rows. */
+  .exit-badge { display:inline-block; font-size:10px; padding:2px 7px; border-radius:8px; font-weight:700; letter-spacing:.3px }
+  .exit-badge.sl     { background:rgba(255,92,124,.12); color:var(--red);    border:1px solid rgba(255,92,124,.35) }
+  .exit-badge.tgt    { background:rgba(61,220,132,.12); color:var(--green);  border:1px solid rgba(61,220,132,.35) }
+  .exit-badge.manual { background:rgba(245,196,81,.12); color:var(--yellow); border:1px solid rgba(245,196,81,.35) }
+  .exit-badge.unk    { background:rgba(255,255,255,.05); color:var(--muted); border:1px solid var(--border) }
   .empty { color:var(--muted); text-align:center; padding:28px; font-style:italic }
   .table-scroll { max-height:400px; overflow-y:auto; margin:0 -16px; padding:0 16px }
 
@@ -130,6 +175,13 @@
                 font-size:11px; overflow-x:auto; white-space:pre-wrap; word-break:break-all }
   .drawer .close-x { position:absolute; top:12px; right:16px; background:none; border:0; color:var(--dim);
                      font-size:22px; cursor:pointer }
+  /* Price-history drawer: wider on desktop (chart needs room), collapses to
+     full-screen on tablet+phone via the existing .drawer breakpoints. */
+  .drawer.price-drawer { width:640px; right:-660px }
+  .drawer.price-drawer.open { right:0 }
+  @media (max-width: 900px) {
+    .drawer.price-drawer { width:100vw; max-width:100vw; right:-100vw }
+  }
 
   /* Toast */
   #toast { position:fixed; bottom:20px; right:20px; padding:12px 18px; background:var(--card-2);
@@ -273,7 +325,7 @@
     <div class="range-card" data-range="all"><div class="rc-label">All time</div><div class="rc-value" id="rw-all">—</div><div class="rc-sub" id="rw-all-sub">—</div></div>
   </div>
 
-  <!-- Charts -->
+  <!-- Charts: equity trend (widest) · market-cap doughnut · sector diverging bars -->
   <div class="charts-grid">
     <div class="card">
       <h3>Equity curve <span class="h3-actions" id="ec-range-label">last 30d · cumulative realized</span></h3>
@@ -286,8 +338,51 @@
       </div>
     </div>
     <div class="card">
-      <h3>Sector performance <span class="h3-actions">realized P&amp;L</span></h3>
-      <div class="sector-list" id="sectorList"><div class="empty">Awaiting first closed trade</div></div>
+      <h3>Market cap performance <span class="h3-actions">AMFI cap mix</span></h3>
+      <div class="chart-box donut">
+        <canvas id="mcapChart"></canvas>
+        <div class="donut-center" id="mcapCenter" style="display:none">
+          <div class="label">Net realized</div>
+          <div class="value" id="mcapCenterValue">—</div>
+          <div class="sub" id="mcapCenterSub">—</div>
+        </div>
+        <div id="mcapEmpty" class="empty" style="display:none;position:absolute;inset:0;
+             align-items:center;justify-content:center">
+          Awaiting first closed trade
+        </div>
+      </div>
+      <div id="mcapLegend" style="margin-top:10px;display:flex;flex-direction:column;gap:4px"></div>
+    </div>
+    <div class="card">
+      <h3>Sector performance <span class="h3-actions">realized P&amp;L · profit right / loss left</span></h3>
+      <div class="div-list" id="sectorList"><div class="empty">Awaiting first closed trade</div></div>
+    </div>
+  </div>
+
+  <!-- Exit discipline (SL / TGT hindsight) -->
+  <div class="card" id="exitCard">
+    <h3>Exit discipline <span class="h3-actions" id="exit-range-label">last 30d · post-exit tracking</span></h3>
+    <div class="kpi-grid" style="margin-bottom:0">
+      <div class="kpi">
+        <div class="label">SL exits</div>
+        <div class="value" id="exit-sl-count">—</div>
+        <div class="sub" id="exit-sl-sub">—</div>
+      </div>
+      <div class="kpi">
+        <div class="label">TGT exits</div>
+        <div class="value" id="exit-tgt-count">—</div>
+        <div class="sub" id="exit-tgt-sub">—</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Manual exits</div>
+        <div class="value" id="exit-manual-count">—</div>
+        <div class="sub" id="exit-manual-sub">—</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Avg SL loss / TGT gain</div>
+        <div class="value"><span id="exit-avg-sl" class="neg">—</span> / <span id="exit-avg-tgt" class="pos">—</span></div>
+        <div class="sub" id="exit-hitrate-sub">—</div>
+      </div>
     </div>
   </div>
 
@@ -297,11 +392,11 @@
     <div class="table-scroll">
       <table id="openTable">
         <thead><tr>
-          <th>Symbol</th><th>Sector</th><th class="right">Qty</th><th class="right">Buy ₹</th>
+          <th>Symbol</th><th>Sector</th><th>Cap</th><th class="right">Qty</th><th class="right">Buy ₹</th>
           <th class="right">LTP ₹</th><th class="right">SL ₹</th><th class="right">TGT ₹</th>
           <th class="right">Unreal ₹</th><th class="right">Unreal %</th><th>Held</th><th>Opened by</th>
         </tr></thead>
-        <tbody id="openBody"><tr><td colspan="11" class="empty">Awaiting first fire</td></tr></tbody>
+        <tbody id="openBody"><tr><td colspan="12" class="empty">Awaiting first fire</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -310,14 +405,15 @@
   <div class="card">
     <h3>Closed trades <span class="h3-actions"><span id="ct-range-label">last 30d</span> · <span id="ctCount">0</span> rows</span></h3>
     <div class="chips" id="sectorChips"></div>
+    <div class="chips" id="mcapChips"></div>
     <div class="table-scroll">
       <table id="closedTable">
         <thead><tr>
-          <th>Entry</th><th>Exit</th><th>Symbol</th><th>Sector</th><th class="right">Qty</th>
+          <th>Entry</th><th>Exit</th><th>Symbol</th><th>Sector</th><th>Cap</th><th>Exit</th><th class="right">Qty</th>
           <th class="right">Buy ₹</th><th class="right">Sell ₹</th><th class="right">P&amp;L ₹</th>
           <th class="right">P&amp;L %</th><th class="right">Held</th>
         </tr></thead>
-        <tbody id="closedBody"><tr><td colspan="10" class="empty">Awaiting first SELL — brackets fire automatically on ±SL/+TGT hit.</td></tr></tbody>
+        <tbody id="closedBody"><tr><td colspan="12" class="empty">Awaiting first SELL — brackets fire automatically on ±SL/+TGT hit.</td></tr></tbody>
       </table>
     </div>
     <div class="table-footer" id="closedFooter"></div>
@@ -345,6 +441,61 @@
   <div id="drawerContent"></div>
 </aside>
 
+<!-- Price-history drawer (single unified chart) -->
+<div class="drawer-overlay" id="priceOverlay" onclick="closePriceDrawer()"></div>
+<aside class="drawer price-drawer" id="priceDrawer">
+  <button class="close-x" onclick="closePriceDrawer()">×</button>
+  <button class="fs-x" id="priceFsBtn" onclick="togglePriceFullscreen()" title="Toggle fullscreen">⛶</button>
+  <div id="priceHeader"></div>
+  <!-- Best-exit hindsight strip (feature #1) -->
+  <div id="priceHindsight" style="margin:12px 0;padding:10px 12px;border:1px solid var(--border);
+       border-radius:6px;background:var(--card-2);font-size:12.5px;line-height:1.55;color:var(--dim);
+       display:none"></div>
+  <!-- Toolbar: overlays / toggles / benchmark selector -->
+  <div id="priceToolbar" style="display:flex;gap:8px;margin:12px 0;flex-wrap:wrap;align-items:center;font-size:12.5px">
+    <label class="pt-toggle" title="Dashed horizontal guide lines at ±1 / ±3 / +5 / +7 / +10% from entry. Useful for eyeballing 'if my TGT had been +7% instead of +5%, would it have hit?'">
+      <input type="checkbox" id="ptLadder" onchange="renderPriceChart()"> Ladder ±1/3/5/7/10%</label>
+    <label class="pt-toggle" title="Hindsight simulation: what would a 3%-trailing stop-loss have looked like? It ratchets up each day to max(prev, close × 0.97) — never down. Answers 'would a trailing SL have caught the run?'">
+      <input type="checkbox" id="ptTrail" onchange="renderPriceChart()"> Trailing SL sim</label>
+    <label class="pt-toggle" title="Daily volume bars on a compressed right axis. Big-volume days often flag breakouts or capitulation lows.">
+      <input type="checkbox" id="ptVolume" onchange="renderPriceChart()" checked> Volume</label>
+    <label class="pt-toggle" title="Show 10 trading days of price action *before* the entry, greyed out. Answers 'was I buying into a downtrend?'">
+      <input type="checkbox" id="ptPreEntry" onchange="renderPriceChart()" checked> Pre-entry ctx</label>
+    <span style="margin-left:auto;color:var(--dim)"
+          title="Overlay a market/sector index line scaled to start at your entry price on entry day. Answers 'did the whole market move, or just my pick?'">
+      Benchmark:</span>
+    <select id="ptBench" onchange="reloadBenchmark()" style="background:var(--card);color:var(--text);
+            border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-size:12px">
+      <option value="">— none —</option>
+      <option value="NIFTY 50">NIFTY 50</option>
+      <option value="__sector__">Sector index</option>
+    </select>
+  </div>
+  <div class="chart-box" style="height:360px;position:relative">
+    <canvas id="priceChart"></canvas>
+    <div id="priceEmpty" class="empty" style="display:none;position:absolute;inset:0;
+         align-items:center;justify-content:center">No candles returned by Kite for this window.</div>
+  </div>
+  <div id="priceFooter" style="margin-top:14px;font-size:12px;color:var(--dim)"></div>
+</aside>
+
+<style>
+  .pt-toggle { display:inline-flex; align-items:center; gap:4px; padding:4px 8px;
+               border:1px solid var(--border); border-radius:4px; background:var(--card);
+               cursor:pointer; user-select:none }
+  .pt-toggle input { margin:0 }
+  /* Fullscreen expand/collapse button, sits next to the close-x on the drawer. */
+  .fs-x { position:absolute; top:10px; right:44px; background:transparent; border:0;
+          color:var(--dim); font-size:18px; cursor:pointer; padding:4px 8px; line-height:1;
+          border-radius:4px }
+  .fs-x:hover { color:var(--text); background:rgba(255,255,255,0.05) }
+  /* When fullscreen, the drawer pins to the entire viewport and the underlying
+     chart-box grows to fill the extra vertical space. */
+  .price-drawer.fullscreen { position:fixed; inset:0; width:100vw !important; max-width:none;
+                             height:100vh; border-radius:0; overflow-y:auto }
+  .price-drawer.fullscreen .chart-box { height: calc(100vh - 280px) !important; min-height:420px }
+</style>
+
 <div id="toast"></div>
 
 <script>
@@ -352,18 +503,23 @@
 const state = {
   range: 'month',
   sectorFilter: null,
+  marketCapFilter: null,
   status: null,
   kpis: null,
   openPositions: [],
   closedTrades: [],
   sectorPerf: [],
+  marketCapPerf: [],
   equity: [],
   orders: [],
+  exitStats: null,
+  exitDiscipline: null,
   ranges: {
     today: null, week: null, month: null, all: null
   }
 };
 let equityChart = null;
+let mcapChart   = null;
 
 // ============================== helpers ==============================
 const fmtRupee = n => (n == null || isNaN(n)) ? '—'
@@ -418,26 +574,65 @@ async function loadAllRanges() {
 
 async function loadActiveRangeData() {
   const r = state.range;
-  const [kpis, open, closed, sectors, equity, orders] = await Promise.all([
+  const [kpis, open, closed, sectors, mcaps, equity, orders, exitStats, exitDisc] = await Promise.all([
     j('/api/pnl/kpis?range=' + r),
     j('/api/pnl/open-positions'),
-    j('/api/pnl/closed-trades?range=' + r + (state.sectorFilter ? '&sector=' + encodeURIComponent(state.sectorFilter) : '')),
+    j(closedTradesUrl()),
     j('/api/pnl/sector-performance?range=' + r),
+    j('/api/pnl/marketcap-performance?range=' + r).catch(() => []),
     j('/api/pnl/equity-curve?range=' + r),
-    j('/api/pnl/orders?range=today')
+    j('/api/pnl/orders?range=today'),
+    j('/api/pnl/exit-stats?range=' + r).catch(() => null),
+    j('/api/pnl/exit-discipline?range=' + r).catch(() => null)
   ]);
   state.kpis = kpis;
   state.openPositions = open;
   state.closedTrades = closed;
   state.sectorPerf = sectors;
+  state.marketCapPerf = mcaps || [];
   state.equity = equity;
   state.orders = orders;
+  state.exitStats = exitStats;
+  state.exitDiscipline = exitDisc;
   renderKpis();
   renderOpen();
   renderClosed();
   renderSectors();
+  renderMarketCaps();
   renderEquity();
   renderAlerts();
+  renderExitDiscipline();
+}
+
+/**
+ * Build the /closed-trades URL for the currently-active range + sector +
+ * marketCap filters. Kept as a function so range switches and chip toggles
+ * always agree on the query shape.
+ */
+function closedTradesUrl() {
+  const r = state.range;
+  return '/api/pnl/closed-trades?range=' + r
+    + (state.sectorFilter    ? '&sector='    + encodeURIComponent(state.sectorFilter)    : '')
+    + (state.marketCapFilter ? '&marketCap=' + encodeURIComponent(state.marketCapFilter) : '');
+}
+
+/**
+ * Fast-path used by every sector / market-cap chip click. Only the
+ * closed-trades list is filter-sensitive — KPIs, sector rollup, market-cap
+ * rollup, equity curve, orders, exit stats are all range-scoped and don't
+ * change when the user narrows to a single sector or cap. Reloading them
+ * would (a) block on ~9 sequential JPA/Kite round-trips per click and (b)
+ * cause the doughnut/diverging bars to lose their filter-highlight briefly
+ * while data re-arrives — both of which we now avoid.
+ */
+async function reloadClosedTradesOnly() {
+  try {
+    const closed = await j(closedTradesUrl());
+    state.closedTrades = closed;
+    renderClosed();
+  } catch (e) {
+    toast('closed-trades: ' + e.message, 'err');
+  }
 }
 
 async function refreshAll() {
@@ -567,7 +762,14 @@ function renderEquity() {
   });
 }
 
-// ============================== render: sector list ==============================
+// ============================== render: sector diverging bars ==============================
+/**
+ * Diverging horizontal bars — profits grow rightward in green, losses grow
+ * leftward in red from a central axis. Solves the "everything looks the same
+ * length" problem of the old abs-value bars: at a glance the reader now sees
+ * both direction and magnitude. Bar widths are scaled by the largest absolute
+ * P&L across all sectors so the biggest gainer/loser fills the full half.
+ */
 function renderSectors() {
   const sectors = state.sectorPerf || [];
   const box = document.getElementById('sectorList');
@@ -577,15 +779,15 @@ function renderSectors() {
   }
   const maxAbs = Math.max(...sectors.map(s => Math.abs(s.realizedPnl)), 1);
   box.innerHTML = sectors.map(s => {
-    const w = Math.abs(s.realizedPnl) / maxAbs * 100;
-    const col = s.realizedPnl >= 0 ? '#3ddc84' : '#ff5c7c';
-    const active = state.sectorFilter === s.sector ? ' style="background:rgba(91,157,255,.08)"' : '';
-    return `<div class="sector-row clickable" onclick="filterBySector('${s.sector.replace(/'/g,"\\'")}')"${active}>
-      <div>${s.sector}</div>
-      <div>
-        <div class="sector-bar"><div style="width:${w}%;background:${col}"></div></div>
-        <div class="sector-meta">${s.trades} trades · ${s.wins}W/${s.losses}L</div>
-      </div>
+    const pos = s.realizedPnl >= 0;
+    const w = Math.abs(s.realizedPnl) / maxAbs * 100; // fill within its half
+    const active = state.sectorFilter === s.sector ? ' active' : '';
+    const bar = pos
+      ? `<div class="half left"></div><div class="half right"><div class="fill pos" style="width:${w}%"></div></div>`
+      : `<div class="half left"><div class="fill neg" style="width:${w}%"></div></div><div class="half right"></div>`;
+    return `<div class="div-row${active}" onclick="filterBySector('${s.sector.replace(/'/g,"\\'")}')" title="${s.sector}">
+      <div class="div-label">${s.sector}<div class="div-meta">${s.trades}t · ${s.wins}W/${s.losses}L</div></div>
+      <div class="div-track">${bar}</div>
       <div class="sector-pnl ${signCls(s.realizedPnl)}">${fmtRupee(s.realizedPnl)}</div>
     </div>`;
   }).join('');
@@ -593,8 +795,136 @@ function renderSectors() {
 
 function filterBySector(sector) {
   state.sectorFilter = (state.sectorFilter === sector) ? null : sector;
-  loadActiveRangeData();
+  reloadClosedTradesOnly();
   renderChips();
+  renderSectors(); // refresh active-row highlight
+}
+
+// ============================== render: market-cap list + pill ==============================
+/**
+ * Colour-coded AMFI market-cap pill. Falls back to a neutral dash for null /
+ * unclassified symbols so unknown IPOs don't look like the same "small cap"
+ * bucket as an actually-classified small-cap.
+ */
+function renderMcapPill(mc) {
+  if (!mc) return '<span style="color:var(--muted)">—</span>';
+  const cls = mc === 'LARGE_CAP' ? 'large'
+            : mc === 'MID_CAP'   ? 'mid'
+            : mc === 'SMALL_CAP' ? 'small' : 'unk';
+  const short = mc === 'LARGE_CAP' ? 'LARGE'
+              : mc === 'MID_CAP'   ? 'MID'
+              : mc === 'SMALL_CAP' ? 'SMALL' : mc;
+  return '<span class="mcap-pill ' + cls + '">' + short + '</span>';
+}
+
+function renderMarketCaps() {
+  const rows = state.marketCapPerf || [];
+  const canvas = document.getElementById('mcapChart');
+  const emptyEl = document.getElementById('mcapEmpty');
+  const centerEl = document.getElementById('mcapCenter');
+  const legendEl = document.getElementById('mcapLegend');
+
+  // Empty state: hide canvas, show placeholder, kill any prior chart.
+  if (rows.length === 0 || rows.every(r => r.trades === 0)) {
+    canvas.style.display = 'none';
+    emptyEl.style.display = 'flex';
+    centerEl.style.display = 'none';
+    legendEl.innerHTML = '';
+    if (mcapChart) { mcapChart.destroy(); mcapChart = null; }
+    return;
+  }
+  canvas.style.display = 'block';
+  emptyEl.style.display = 'none';
+
+  // Slice size = share of trade count (composition of the book). Colour ==
+  // sign of the bucket's realized P&L, so the ring shows both "where were
+  // the bets placed" and "which buckets made / lost money" simultaneously.
+  const palette = { LARGE_CAP:'#5b9dff', MID_CAP:'#f5c451', SMALL_CAP:'#c084fc', UNKNOWN:'#6b7280' };
+  const netTotal = rows.reduce((a,r) => a + r.realizedPnl, 0);
+  const tradesTotal = rows.reduce((a,r) => a + r.trades, 0);
+
+  const labels = rows.map(r => shortCap(r.marketCap));
+  const data   = rows.map(r => r.trades);
+  const bg     = rows.map(r => palette[r.marketCap] || '#6b7280');
+  // Highlight active filter by dimming the others.
+  const alpha  = rows.map(r =>
+    !state.marketCapFilter || state.marketCapFilter === r.marketCap ? 1 : 0.25);
+  const bgFinal = bg.map((c, i) => hexAlpha(c, alpha[i]));
+
+  const ctx = canvas.getContext('2d');
+  if (mcapChart) mcapChart.destroy();
+  mcapChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: { labels, datasets: [{ data, backgroundColor: bgFinal, borderColor:'#0f1420', borderWidth:2, hoverOffset:6 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: '68%',
+      onClick: (_, els) => {
+        if (!els.length) return;
+        filterByMarketCap(rows[els[0].index].marketCap);
+      },
+      plugins: {
+        legend: { display: false }, // custom legend below the chart
+        tooltip: {
+          callbacks: {
+            label: c => {
+              const r = rows[c.dataIndex];
+              const share = (r.trades / tradesTotal * 100).toFixed(0);
+              return `${shortCap(r.marketCap)} · ${r.trades} trades (${share}%) · ${fmtRupee2(r.realizedPnl)} · ${r.wins}W/${r.losses}L`;
+            }
+          }
+        }
+      }
+    }
+  });
+
+  // Center label: net realized P&L, colour-coded, with total trade count.
+  centerEl.style.display = 'flex';
+  const val = document.getElementById('mcapCenterValue');
+  val.textContent = fmtRupee(netTotal);
+  val.className = 'value ' + signCls(netTotal);
+  document.getElementById('mcapCenterSub').textContent = `${tradesTotal} trades`;
+
+  // Custom legend rows: pill · share · win-rate · P&L. Clickable to filter.
+  legendEl.innerHTML = rows.map(r => {
+    const share = (r.trades / tradesTotal * 100).toFixed(0);
+    const wr = r.trades > 0 ? Math.round(r.wins * 100 / r.trades) : 0;
+    const active = state.marketCapFilter === r.marketCap ? ';background:rgba(91,157,255,.08);border-radius:4px' : '';
+    return `<div onclick="filterByMarketCap('${r.marketCap}')"
+      style="display:grid;grid-template-columns:70px 1fr auto;gap:8px;align-items:center;
+             padding:3px 6px;cursor:pointer;font-size:12px${active}">
+      <div>${renderMcapPill(r.marketCap)}</div>
+      <div style="color:var(--dim)">${share}% · ${r.trades}t · ${wr}% WR</div>
+      <div class="${signCls(r.realizedPnl)}" style="font-variant-numeric:tabular-nums;font-weight:600">${fmtRupee(r.realizedPnl)}</div>
+    </div>`;
+  }).join('');
+}
+
+/** Human-friendly short label for a cap category ("LARGE", "MID", …). */
+function shortCap(mc) {
+  return mc === 'LARGE_CAP' ? 'Large'
+       : mc === 'MID_CAP'   ? 'Mid'
+       : mc === 'SMALL_CAP' ? 'Small'
+       : (mc || 'Unknown');
+}
+/** Convert a #rrggbb to rgba with the given alpha. Used to dim inactive slices. */
+function hexAlpha(hex, a) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
+}
+
+function filterByMarketCap(mc) {
+  state.marketCapFilter = (state.marketCapFilter === mc) ? null : mc;
+  reloadClosedTradesOnly();
+  renderChips();
+  renderMarketCaps(); // refresh doughnut dim + active legend row
+}
+function clearMarketCapFilter() {
+  state.marketCapFilter = null;
+  reloadClosedTradesOnly();
+  renderChips();
+  renderMarketCaps();
 }
 
 // ============================== render: open positions ==============================
@@ -603,7 +933,7 @@ function renderOpen() {
   document.getElementById('opCount').textContent = rows.length + ' position' + (rows.length===1?'':'s');
   const body = document.getElementById('openBody');
   if (rows.length === 0) {
-    body.innerHTML = '<tr><td colspan="11" class="empty">No open positions</td></tr>';
+    body.innerHTML = '<tr><td colspan="12" class="empty">No open positions</td></tr>';
     return;
   }
   rows.sort((a, b) => b.unrealizedPnl - a.unrealizedPnl);
@@ -612,11 +942,13 @@ function renderOpen() {
     const sectorCell = p.sector
       ? `<span class="sector-pill">${p.sector}</span>`
       : `<span style="color:var(--muted)">—</span>`;
+    const mcapCell = renderMcapPill(p.marketCap);
     const slCell  = p.stopLossPrice != null ? p.stopLossPrice.toFixed(2) : '—';
     const tgtCell = p.targetPrice   != null ? p.targetPrice.toFixed(2)   : '—';
     return `<tr onclick='openPosDrawer(${idx})' style="cursor:pointer">
-      <td class="row-symbol">${p.symbol}</td>
+      <td class="row-symbol" onclick='event.stopPropagation(); openPriceDrawer(${JSON.stringify(p.symbol)}, ${JSON.stringify(p.openedAt)}, ${p.buyPrice||0}, ${p.stopLossPrice||0}, ${p.targetPrice||0}, null, null, ${JSON.stringify(p.sector||"")})' style="cursor:pointer;text-decoration:underline;text-decoration-color:var(--muted);text-underline-offset:3px">${p.symbol}</td>
       <td>${sectorCell}</td>
+      <td>${mcapCell}</td>
       <td class="right">${p.quantity}</td>
       <td class="right">${p.buyPrice.toFixed(2)}</td>
       <td class="right">${p.ltp ? p.ltp.toFixed(2) : '—'}</td>
@@ -642,6 +974,7 @@ function openPosDrawer(idx) {
       <div class="k">Strategy</div>       <div>${p.strategy}</div>
       <div class="k">Sector</div>         <div>${p.sector    || '—'}</div>
       <div class="k">Industry</div>       <div>${p.industry  || '—'}</div>
+      <div class="k">Market cap</div>     <div>${renderMcapPill(p.marketCap)}</div>
       <div class="k">Alert</div>          <div>${p.alertName || '—'}</div>
       <div class="k">Quantity</div>       <div>${p.quantity}</div>
       <div class="k">Buy price</div>      <div>${p.buyPrice.toFixed(2)}</div>
@@ -667,6 +1000,468 @@ function closeDrawer() {
   document.getElementById('drawerOverlay').classList.remove('open');
 }
 
+// ============================== price-history drawer (unified single-chart) ==============================
+// See feature spec (backend BestExitSummary + BenchmarkService): one chart,
+// H/L range band, entry/SL/TGT lines, ladder guides, benchmark overlay,
+// trailing-SL simulation, volume bars, and pre-entry context greyed out.
+let priceChart = null;
+const priceState = {
+  symbol: null, entryAt: null, entryPx: 0, sl: 0, tgt: 0, sector: null,
+  exitAt: null, exitPx: null,
+  candles: [],           // stock candles (with preEntry flag)
+  benchCandles: [],      // benchmark candles aligned to same date window
+  benchName: null,
+  summary: null          // BestExitSummary from /best-exit-summary
+};
+
+async function openPriceDrawer(symbol, entryAt, entryPx, sl, tgt, exitAt, exitPx, sector) {
+  priceState.symbol = symbol;
+  priceState.entryAt = entryAt;
+  priceState.entryPx = Number(entryPx) || 0;
+  priceState.sl = Number(sl) || 0;
+  priceState.tgt = Number(tgt) || 0;
+  priceState.sector = sector || null;
+  priceState.exitAt = exitAt || null;
+  priceState.exitPx = exitPx != null ? Number(exitPx) : null;
+  priceState.candles = [];
+  priceState.benchCandles = [];
+  priceState.benchName = null;
+  priceState.summary = null;
+
+  document.getElementById('priceDrawer').classList.add('open');
+  document.getElementById('priceOverlay').classList.add('open');
+
+  const entryDate = entryAt ? new Date(entryAt) : null;
+  const fromDate = entryDate ? entryDate.toISOString().substring(0, 10) : '';
+
+  const slLine = priceState.sl > 0
+    ? `<span class="neg">SL ₹${priceState.sl.toFixed(2)}</span>` : '<span style="color:var(--muted)">no SL</span>';
+  const tgtLine = priceState.tgt > 0
+    ? `<span class="tgt">TGT ₹${priceState.tgt.toFixed(2)}</span>` : '<span style="color:var(--muted)">no TGT</span>';
+  const exitLine = (exitAt && exitPx != null)
+    ? ` · <span>exit ${fmtTime(exitAt)} @ ₹${Number(exitPx).toFixed(2)}</span>` : '';
+  document.getElementById('priceHeader').innerHTML =
+    `<h3 style="margin-top:0">${symbol} · post-entry price journey</h3>
+     <div style="color:var(--dim);font-size:13px">
+       Entry <strong>${fromDate}</strong> @ <strong>₹${priceState.entryPx.toFixed(2)}</strong>
+       · ${slLine} · ${tgtLine}${exitLine}
+       ${sector ? ' · sector <span class="sector-pill">'+sector+'</span>' : ''}
+     </div>`;
+  document.getElementById('priceFooter').textContent = 'Loading candles from Kite…';
+  document.getElementById('priceHindsight').style.display = 'none';
+  document.getElementById('priceEmpty').style.display = 'none';
+
+  // Sector benchmark option: only show if backend can resolve a sector index.
+  const benchSel = document.getElementById('ptBench');
+  const sectorOpt = benchSel.querySelector('option[value="__sector__"]');
+  sectorOpt.disabled = !sector;
+  sectorOpt.textContent = sector ? `Sector · ${sector}` : 'Sector index (n/a)';
+  benchSel.value = '';
+
+  try {
+    const params = new URLSearchParams({ symbol, fromDate, days: 30, before: 10 });
+    const summaryParams = new URLSearchParams({ symbol, fromDate, entryPx: priceState.entryPx, days: 30 });
+    if (priceState.sl > 0)  summaryParams.append('sl',  priceState.sl);
+    if (priceState.tgt > 0) summaryParams.append('tgt', priceState.tgt);
+    const [candles, summary] = await Promise.all([
+      j('/api/pnl/price-history?' + params.toString()),
+      j('/api/pnl/best-exit-summary?' + summaryParams.toString()).catch(() => null)
+    ]);
+    priceState.candles = Array.isArray(candles) ? candles : [];
+    priceState.summary = summary;
+    renderHindsightStrip();
+    renderPriceChart();
+  } catch (e) {
+    priceState.candles = [];
+    renderPriceChart();
+    toast('price-history: ' + e.message, 'err');
+  }
+}
+
+function closePriceDrawer() {
+  document.getElementById('priceDrawer').classList.remove('open');
+  document.getElementById('priceOverlay').classList.remove('open');
+  document.getElementById('priceDrawer').classList.remove('fullscreen');
+  if (priceChart) { priceChart.destroy(); priceChart = null; }
+}
+
+// Fullscreen toggle for the price-journey drawer. Chart.js needs a resize
+// nudge after the container dimensions change or it stays at the pre-toggle
+// size until the next window resize.
+function togglePriceFullscreen() {
+  const d = document.getElementById('priceDrawer');
+  d.classList.toggle('fullscreen');
+  const btn = document.getElementById('priceFsBtn');
+  const isFs = d.classList.contains('fullscreen');
+  btn.textContent = isFs ? '🗗' : '⛶';
+  btn.title = isFs ? 'Collapse' : 'Toggle fullscreen';
+  // Give the browser a frame to re-layout, then tell Chart.js to resize.
+  requestAnimationFrame(() => { if (priceChart) priceChart.resize(); });
+}
+
+async function reloadBenchmark() {
+  const sel = document.getElementById('ptBench').value;
+  if (!sel) {
+    priceState.benchCandles = [];
+    priceState.benchName = null;
+    renderPriceChart();
+    return;
+  }
+  const entryDate = priceState.entryAt ? new Date(priceState.entryAt) : null;
+  const fromDate = entryDate ? entryDate.toISOString().substring(0, 10) : '';
+  const bench = sel === '__sector__' ? 'sector:' + (priceState.sector || '') : sel;
+  try {
+    const data = await j('/api/pnl/benchmark-history?bench=' + encodeURIComponent(bench)
+                       + '&fromDate=' + fromDate + '&days=30&before=10');
+    priceState.benchCandles = Array.isArray(data) ? data : [];
+    priceState.benchName = sel === '__sector__' ? ('Sector · ' + priceState.sector) : sel;
+    if (priceState.benchCandles.length === 0) toast('benchmark: no data for ' + bench, 'err');
+    renderPriceChart();
+  } catch (e) {
+    priceState.benchCandles = [];
+    toast('benchmark: ' + e.message, 'err');
+  }
+}
+
+// -------- hindsight strip (feature #1) --------
+function renderHindsightStrip() {
+  const el = document.getElementById('priceHindsight');
+  const s = priceState.summary;
+  if (!s || s.peakDay == null) { el.style.display = 'none'; return; }
+  const cls = (pct) => pct >= 0 ? 'pos' : 'neg';
+  const fmtP = (pct) => (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%';
+  const parts = [];
+  parts.push(`📈 Peak <strong>₹${s.peakHigh.toFixed(2)}</strong> on ${s.peakDay} · <span class="${cls(s.peakPct)}">${fmtP(s.peakPct)}</span>`);
+  parts.push(`📉 Trough <strong>₹${s.troughLow.toFixed(2)}</strong> on ${s.troughDay} · <span class="${cls(s.troughPct)}">${fmtP(s.troughPct)}</span>`);
+  parts.push(`🎯 Best close <strong>₹${s.bestClose.toFixed(2)}</strong> on ${s.bestCloseDay} · <span class="${cls(s.bestClosePct)}">${fmtP(s.bestClosePct)}</span>`);
+  if (s.slHitDay)  parts.push(`⚠️ SL first touched on <strong>${s.slHitDay}</strong>`);
+  if (s.tgtHitDay) parts.push(`✅ TGT first touched on <strong>${s.tgtHitDay}</strong>`);
+  el.innerHTML = parts.join(' &nbsp;·&nbsp; ');
+  el.style.display = 'block';
+}
+
+// -------- main chart renderer --------
+// Wrapper that surfaces any exception via toast — otherwise a silent throw
+// inside `new Chart(...)` looks identical to "nothing happened" when the
+// user toggles a checkbox.
+function renderPriceChart() {
+  try { renderPriceChartImpl(); }
+  catch (e) { console.error('renderPriceChart failed', e); toast('chart: ' + e.message, 'err'); }
+}
+function renderPriceChartImpl() {
+  const canvas  = document.getElementById('priceChart');
+  const emptyEl = document.getElementById('priceEmpty');
+  const footer  = document.getElementById('priceFooter');
+
+  // Defensive: if a previous render threw mid-construction, `priceChart` may
+  // be null while Chart.js still holds a live instance bound to the canvas
+  // ("Canvas is already in use" error). Chart.getChart() finds any orphan.
+  const orphan = (window.Chart && Chart.getChart) ? Chart.getChart(canvas) : null;
+  if (orphan) orphan.destroy();
+  if (priceChart) { priceChart.destroy(); priceChart = null; }
+  if (!priceState.candles || priceState.candles.length === 0) {
+    canvas.style.display = 'none';
+    emptyEl.style.display = 'flex';
+    footer.textContent = '';
+    return;
+  }
+  canvas.style.display = 'block';
+  emptyEl.style.display = 'none';
+
+  const showPreEntry = document.getElementById('ptPreEntry').checked;
+  const showLadder   = document.getElementById('ptLadder').checked;
+  const showTrail    = document.getElementById('ptTrail').checked;
+  const showVolume   = document.getElementById('ptVolume').checked;
+
+  // Filter out pre-entry candles if toggle off
+  const candles = showPreEntry ? priceState.candles
+                               : priceState.candles.filter(c => !c.preEntry);
+  const labels = candles.map(c => c.date);
+  const highs  = candles.map(c => c.high);
+  const lows   = candles.map(c => c.low);
+  const closes = candles.map(c => c.close);
+  const vols   = candles.map(c => c.volume);
+  const preEntryFlags = candles.map(c => c.preEntry);
+
+  // Anchor index — first non-preEntry candle
+  const entryIdx = candles.findIndex(c => !c.preEntry);
+
+  // Per-point colouring for the range fill: greenish if close>=open, red otherwise.
+  // Pre-entry days get a muted grey so the eye reads them as "background context"
+  // and the post-entry section pops (feature #7 — pre-entry context "greyed out").
+  const opens = candles.map(c => c.open);
+  const dayCls = candles.map((c,i) =>
+    c.preEntry ? 'rgba(136,146,172,0.55)'
+               : (c.close >= c.open ? '#3ddc84' : '#ff5c7c'));
+
+  // Helper: for reference lines (entry / SL / TGT / ladder) that only make
+  // sense from the entry day onward — null out the pre-entry indices so the
+  // dashed lines don't stretch across a period when those levels didn't exist.
+  const postEntryOnly = (val) => candles.map((c,i) => c.preEntry ? null : val);
+  // Line style helpers so pre-entry portions of the H/L/Close series render
+  // thin & translucent while post-entry uses full-weight colour. Chart.js 4
+  // supports per-segment styling via the `segment` API.
+  const dimSegment = (postColor, dimColor) => ({
+    borderColor: (ctx) => (candles[ctx.p0DataIndex] && candles[ctx.p0DataIndex].preEntry) ? dimColor : postColor,
+    borderWidth: (ctx) => (candles[ctx.p0DataIndex] && candles[ctx.p0DataIndex].preEntry) ? 1     : 1.5
+  });
+
+  // ---- Datasets ----
+  // Every line dataset gets an explicit `type: 'line'`. Belt & braces: the
+  // top-level `type: 'line'` in the Chart config should suffice, but some
+  // Chart.js builds (or cached versions) don't propagate the default to
+  // datasets that already carry other type-like keys (e.g. `showLine`),
+  // yielding "undefined is not a registered controller".
+  const datasets = [];
+
+  // Range band: draw Low first, then High with fill:'-1' → filled ribbon between.
+  datasets.push({
+    type: 'line',
+    label: 'Daily Low',
+    data: lows,
+    borderColor: '#ff5c7c',
+    backgroundColor: 'rgba(255,92,124,0.05)',
+    borderWidth: 1.5, tension: 0.25,
+    pointRadius: 0, pointHoverRadius: 4,
+    fill: false,
+    yAxisID: 'y',
+    segment: dimSegment('#ff5c7c', 'rgba(255,92,124,0.35)')
+  });
+  datasets.push({
+    type: 'line',
+    label: 'Daily High',
+    data: highs,
+    borderColor: '#3ddc84',
+    backgroundColor: 'rgba(93,157,255,0.10)',
+    borderWidth: 1.5, tension: 0.25,
+    pointRadius: 0, pointHoverRadius: 4,
+    fill: '-1',   // fill between High and Low → the volatility ribbon
+    yAxisID: 'y',
+    segment: dimSegment('#3ddc84', 'rgba(61,220,132,0.35)')
+  });
+  // Close line — thin, so the eye can spot direction.
+  datasets.push({
+    type: 'line',
+    label: 'Close',
+    data: closes,
+    borderColor: 'rgba(230,235,245,0.85)',
+    borderWidth: 1.2, tension: 0.2,
+    pointRadius: preEntryFlags.map(p => p ? 0 : 2),
+    pointBackgroundColor: dayCls,
+    pointBorderColor: dayCls,
+    pointHoverRadius: 5,
+    fill: false,
+    yAxisID: 'y',
+    segment: dimSegment('rgba(230,235,245,0.85)', 'rgba(230,235,245,0.25)')
+  });
+
+  // Reference lines: entry, SL, TGT — only meaningful from the entry day
+  // onward; null out the pre-entry indices so the dashed lines don't visually
+  // extend into a period when those levels didn't exist yet.
+  const flat = (val, color, dash, label) => ({
+    type: 'line',
+    label, data: postEntryOnly(val),
+    borderColor: color, borderWidth: 1.5, borderDash: dash,
+    pointRadius: 0, fill: false, tension: 0, yAxisID: 'y',
+    spanGaps: false,
+    _isRef: true   // hidden from the per-point tooltip (flat guide line)
+  });
+  if (priceState.entryPx > 0) datasets.push(flat(priceState.entryPx, '#5b9dff', [4,4], 'Entry'));
+  if (priceState.sl > 0)      datasets.push(flat(priceState.sl,      '#ff5c7c', [6,3], 'SL'));
+  if (priceState.tgt > 0)     datasets.push(flat(priceState.tgt,     '#3ddc84', [6,3], 'TGT'));
+
+  // Ladder guides — faint dashed lines at ±1/3/5/7/10% from entry (feature #2)
+  if (showLadder && priceState.entryPx > 0) {
+    const ladder = [-3, -1, 1, 3, 5, 7, 10];
+    for (const pct of ladder) {
+      const v = priceState.entryPx * (1 + pct/100);
+      // Very low opacity — ladder is a *guide* not a focal element. If it's
+      // as loud as the Entry/SL/TGT dashed lines the chart becomes noise.
+      const color = pct < 0 ? 'rgba(255,92,124,0.15)' : 'rgba(61,220,132,0.15)';
+      datasets.push({
+        type: 'line',
+        label: (pct>0?'+':'') + pct + '%',
+        data: postEntryOnly(v),
+        borderColor: color, borderWidth: 1, borderDash: [1,5],
+        pointRadius: 0, fill: false, tension: 0, yAxisID: 'y',
+        spanGaps: false,
+        _isRef: true
+      });
+    }
+  }
+
+  // Trailing-SL simulation (feature #5). Start SL at priceState.sl (or entry−2%),
+  // and each day ratchet it up to max(prev, close × (1 - trailPct)). Never
+  // ratchets down. This is purely visual — the trade was actually managed
+  // with a fixed SL; the overlay answers "would a trailing SL have caught
+  // the run?".
+  if (showTrail && priceState.entryPx > 0) {
+    const trailPct = 0.03; // 3% below running close — decent generic default
+    const initSl = priceState.sl > 0 ? priceState.sl : priceState.entryPx * 0.98;
+    let cur = initSl;
+    const trail = [];
+    for (let i = 0; i < candles.length; i++) {
+      if (candles[i].preEntry) { trail.push(null); continue; }
+      const candidate = candles[i].close * (1 - trailPct);
+      if (candidate > cur) cur = candidate;
+      trail.push(cur);
+    }
+    datasets.push({
+      type: 'line',
+      label: 'Trailing SL (3%)',
+      data: trail,
+      borderColor: '#f5c451', borderWidth: 1.5, borderDash: [3,3],
+      pointRadius: 0, fill: false, tension: 0, yAxisID: 'y',
+      _isRef: true
+    });
+  }
+
+  // Benchmark overlay — normalise so bench starts at entryPx on entry day
+  // and moves by its own % change. Visually intuitive on the same y-axis.
+  if (priceState.benchCandles.length > 0 && entryIdx >= 0 && priceState.entryPx > 0) {
+    // Build a date→closes map for the bench, then align to our labels.
+    const bMap = {};
+    for (const b of priceState.benchCandles) bMap[b.date] = b.close;
+    let bAnchor = null;
+    for (let i = entryIdx; i < labels.length; i++) {
+      if (bMap[labels[i]] != null) { bAnchor = bMap[labels[i]]; break; }
+    }
+    if (bAnchor != null) {
+      const shadow = labels.map(d => bMap[d] != null ? priceState.entryPx * (bMap[d] / bAnchor) : null);
+      datasets.push({
+        type: 'line',
+        label: priceState.benchName + ' (scaled)',
+        data: shadow,
+        // Solid, bright, thicker — the benchmark is the answer to "was this a
+        // market move or a stock move?", so it needs to *pop* against the
+        // dashed reference-line clutter. `order: -1` renders it on top.
+        borderColor: '#c084fc',
+        backgroundColor: 'rgba(192,132,252,0.08)',
+        borderWidth: 2.5,
+        pointRadius: 0, pointHoverRadius: 4,
+        fill: false, tension: 0.25, yAxisID: 'y',
+        spanGaps: true, order: -1
+      });
+    }
+  }
+
+  // Volume bars on a hidden right axis, low opacity so they're context not focus.
+  if (showVolume) {
+    datasets.push({
+      type: 'bar',
+      label: 'Volume',
+      data: vols,
+      backgroundColor: preEntryFlags.map((p,i) =>
+        p ? 'rgba(136,146,172,0.25)' : (candles[i].close >= candles[i].open ? 'rgba(61,220,132,0.35)' : 'rgba(255,92,124,0.35)')),
+      borderWidth: 0,
+      yAxisID: 'volume',
+      order: 99  // draw beneath lines
+    });
+  }
+
+  // Exit marker
+  if (priceState.exitAt && priceState.exitPx != null) {
+    const exitDate = new Date(priceState.exitAt).toISOString().substring(0, 10);
+    const exitIdx = labels.indexOf(exitDate);
+    if (exitIdx >= 0) {
+      const point = labels.map((_, i) => i === exitIdx ? priceState.exitPx : null);
+      datasets.push({
+        type: 'line',
+        label: 'Exit', data: point,
+        borderColor: '#f5c451', backgroundColor: '#f5c451',
+        pointRadius: 7, pointHoverRadius: 9, pointStyle: 'triangle',
+        showLine: false, yAxisID: 'y'
+      });
+    }
+  }
+
+  // Entry-day marker — a bright blue dot at (entryDay, entryPx) so the eye
+  // instantly locks onto where the trade actually started, even when a lot
+  // of pre-entry context is visible on the left.
+  if (entryIdx >= 0 && priceState.entryPx > 0) {
+    const point = labels.map((_, i) => i === entryIdx ? priceState.entryPx : null);
+    datasets.push({
+      type: 'line',
+      label: 'Entry day', data: point,
+      borderColor: '#5b9dff', backgroundColor: '#5b9dff',
+      pointRadius: 6, pointHoverRadius: 8, pointStyle: 'circle',
+      showLine: false, yAxisID: 'y'
+    });
+  }
+
+  // Footer: mini H-L range summary for post-entry days only.
+  const postEntry = candles.filter(c => !c.preEntry);
+  if (postEntry.length > 0) {
+    const maxH = Math.max(...postEntry.map(c => c.high));
+    const minL = Math.min(...postEntry.map(c => c.low));
+    const avgRange = postEntry.reduce((a,c) => a + (c.high - c.low), 0) / postEntry.length;
+    footer.innerHTML = `Post-entry window: <strong>${postEntry.length}</strong> trading days ·
+      range <strong>₹${minL.toFixed(2)} → ₹${maxH.toFixed(2)}</strong> ·
+      avg daily H−L <strong>₹${avgRange.toFixed(2)}</strong>` +
+      (priceState.benchName ? ` · vs <span style="color:#c084fc">${priceState.benchName}</span>` : '');
+  } else {
+    footer.textContent = '';
+  }
+
+  const ctx = canvas.getContext('2d');
+  priceChart = new Chart(ctx, {
+    // Default type = line; the Volume dataset overrides to 'bar' inline.
+    // Without this top-level type Chart.js can't resolve controllers for
+    // untyped datasets and throws "undefined is not a registered controller".
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      // Tooltip pops for the *single nearest* point under the cursor, not the
+      // whole vertical index — otherwise every non-ref series at that day
+      // shows up and drowns out which line the user is actually pointing at.
+      // Chart.js interprets `mode:'nearest' + intersect:false` as "nearest
+      // single element by distance". Do NOT set `axis:'x'` here — that
+      // widens the hit-test to every series sharing the nearest x-index,
+      // which is exactly what we're trying to avoid.
+      interaction: { mode: 'nearest', intersect: false },
+      hover:       { mode: 'nearest', intersect: false },
+      plugins: {
+        legend: { labels: { color: '#8892a6', boxWidth: 12, font: { size: 11 },
+                            filter: (item) => !/^[-+]?\d+%$/.test(item.text) } }, // hide ladder labels
+        tooltip: {
+          // Hide flat reference lines (Entry / SL / TGT / ladder / Trailing)
+          // from the tooltip — they're always at the same y-value, so
+          // showing them per-day just clutters the popup.
+          filter: (item) => !(item.dataset && item.dataset._isRef),
+          callbacks: {
+            label: c => {
+              const dsLabel = c.dataset.label || '';
+              if (dsLabel === 'Volume') return dsLabel + ': ' + Number(c.parsed.y).toLocaleString();
+              return dsLabel + ': ₹' + Number(c.parsed.y).toFixed(2);
+            }
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { color: (ctx) => preEntryFlags[ctx.index] ? 'rgba(136,146,172,0.45)' : '#8892a6',
+                      maxRotation:0, autoSkip:true, maxTicksLimit:8,
+                      // Wrap pre-entry x-ticks in `(…)` for a second visual cue.
+                      callback: function(v, i) {
+                        const l = labels[i] || '';
+                        return preEntryFlags[i] ? '(' + l.substring(5) + ')' : l.substring(5);
+                      } },
+             grid: { color:'rgba(255,255,255,0.03)' } },
+        y: { position: 'left',
+             ticks: { color:'#8892a6', callback: v => '₹' + v },
+             grid: { color:'rgba(255,255,255,0.05)' } },
+        volume: { position: 'right', display: showVolume,
+                  ticks: { color:'#5b6478', font:{size:10},
+                           callback: v => v >= 1e6 ? (v/1e6).toFixed(1)+'M'
+                                       : v >= 1e3 ? (v/1e3).toFixed(0)+'k' : v },
+                  grid: { display: false },
+                  // Compress the volume axis so bars only fill lower third of chart
+                  suggestedMax: showVolume ? Math.max(...vols, 1) * 3 : undefined }
+      }
+    }
+  });
+}
+
 // ============================== render: closed trades ==============================
 function renderClosed() {
   const rows = state.closedTrades || [];
@@ -675,15 +1470,17 @@ function renderClosed() {
   document.getElementById('ct-range-label').textContent = rangeText;
   const body = document.getElementById('closedBody');
   if (rows.length === 0) {
-    body.innerHTML = '<tr><td colspan="10" class="empty">Awaiting first SELL — brackets fire automatically on SL / TGT hit.</td></tr>';
+    body.innerHTML = '<tr><td colspan="12" class="empty">Awaiting first SELL — brackets fire automatically on SL / TGT hit.</td></tr>';
     document.getElementById('closedFooter').innerHTML = '';
     return;
   }
   body.innerHTML = rows.map(t => `<tr>
     <td>${fmtTime(t.entryAt)}</td>
     <td>${fmtTime(t.exitAt)}</td>
-    <td class="row-symbol">${t.symbol}</td>
+    <td class="row-symbol" onclick='openPriceDrawer(${JSON.stringify(t.symbol)}, ${JSON.stringify(t.entryAt)}, ${t.entryPx}, ${t.stopLossPrice||0}, ${t.targetPrice||0}, ${JSON.stringify(t.exitAt)}, ${t.exitPx}, ${JSON.stringify(t.sector||"")})' style="cursor:pointer;text-decoration:underline;text-decoration-color:var(--muted);text-underline-offset:3px">${t.symbol}</td>
     <td>${t.sector ? '<span class="sector-pill">'+t.sector+'</span>' : '<span style="color:var(--muted)">—</span>'}</td>
+    <td>${renderMcapPill(t.marketCap)}</td>
+    <td>${renderExitBadge(t.exitType)}</td>
     <td class="right">${t.quantity}</td>
     <td class="right">${t.entryPx.toFixed(2)}</td>
     <td class="right">${t.exitPx.toFixed(2)}</td>
@@ -715,8 +1512,81 @@ function renderChips() {
   chips.innerHTML =
     `<span class="chip ${!state.sectorFilter ? 'active' : ''}" onclick="clearSectorFilter()">All sectors</span>` +
     sectors.map(s => `<span class="chip ${state.sectorFilter===s?'active':''}" onclick="filterBySector('${s.replace(/'/g,"\\'")}')">${s}</span>`).join('');
+
+  // Market-cap chip row — mirrors the sector chips and stacks below them so
+  // you can slice closed trades by both dimensions independently.
+  const caps = (state.marketCapPerf || []).map(m => m.marketCap);
+  const mchips = document.getElementById('mcapChips');
+  if (mchips) {
+    mchips.innerHTML =
+      `<span class="chip ${!state.marketCapFilter ? 'active' : ''}" onclick="clearMarketCapFilter()">All caps</span>` +
+      caps.map(m => `<span class="chip ${state.marketCapFilter===m?'active':''}" onclick="filterByMarketCap('${m}')">${renderMcapPill(m)}</span>`).join('');
+  }
 }
-function clearSectorFilter() { state.sectorFilter = null; loadActiveRangeData(); }
+function clearSectorFilter() {
+  state.sectorFilter = null;
+  reloadClosedTradesOnly();
+  renderChips();
+  renderSectors();
+}
+
+// ============================== render: exit badges + discipline ==============================
+function renderExitBadge(exitType) {
+  if (!exitType) return '<span class="exit-badge unk">—</span>';
+  const t = exitType.toUpperCase();
+  if (t === 'SL' || t === 'SL_APPROX') return '<span class="exit-badge sl" title="' + t + '">SL</span>';
+  if (t === 'TGT')                     return '<span class="exit-badge tgt">TGT</span>';
+  if (t === 'MANUAL')                  return '<span class="exit-badge manual">MANUAL</span>';
+  return '<span class="exit-badge unk">' + t + '</span>';
+}
+
+function renderExitDiscipline() {
+  const rangeText = { today:'today', week:'last 7d', month:'last 30d', all:'all time' }[state.range];
+  document.getElementById('exit-range-label').textContent = rangeText + ' · post-exit tracking';
+
+  const s = state.exitStats;
+  const d = state.exitDiscipline;
+  const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+  const setH = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+
+  if (!s) {
+    set('exit-sl-count', '—'); set('exit-tgt-count', '—'); set('exit-manual-count', '—');
+    set('exit-avg-sl', '—'); set('exit-avg-tgt', '—');
+    set('exit-sl-sub', 'awaiting data'); set('exit-tgt-sub', ''); set('exit-manual-sub', '');
+    set('exit-hitrate-sub', '');
+    return;
+  }
+
+  set('exit-sl-count', s.slCount);
+  set('exit-tgt-count', s.tgtCount);
+  set('exit-manual-count', s.manualCount);
+  set('exit-avg-sl', fmtPct(s.avgSlLoss));
+  set('exit-avg-tgt', fmtPct(s.avgTgtGain));
+  set('exit-hitrate-sub', 'SL hit rate ' + ((s.slHitRate||0) * 100).toFixed(0) + '%');
+
+  // Sub-lines: pull from exit-discipline endpoint (7d hindsight window).
+  if (d && d.slExits > 0) {
+    const savedPct  = Math.round(d.slSavedCount     * 100 / d.slExits);
+    const preemPct  = Math.round(d.slPrematureCount * 100 / d.slExits);
+    setH('exit-sl-sub',
+      `<span class="pos">${d.slSavedCount} saved (${savedPct}%)</span> · ` +
+      `<span class="neg">${d.slPrematureCount} premature (${preemPct}%)</span>` +
+      (d.slPrematureCount > 0 ? ` · avg missed ${fmtPct(d.avgMissedRecoveryPct)}` : ''));
+  } else {
+    set('exit-sl-sub', 'no SL exits yet');
+  }
+  if (d && d.tgtExits > 0) {
+    const clippedPct = Math.round(d.tgtKeptRunningCount * 100 / d.tgtExits);
+    const wellPct    = Math.round(d.tgtReversedCount    * 100 / d.tgtExits);
+    setH('exit-tgt-sub',
+      `<span class="neutral">${d.tgtKeptRunningCount} clipped (${clippedPct}%)</span> · ` +
+      `<span class="pos">${d.tgtReversedCount} well-timed (${wellPct}%)</span>` +
+      (d.tgtKeptRunningCount > 0 ? ` · avg missed ${fmtPct(d.avgMissedRunPct)}` : ''));
+  } else {
+    set('exit-tgt-sub', 'no TGT exits yet');
+  }
+  set('exit-manual-sub', s.manualCount > 0 ? 'user squared-off from Kite' : 'none');
+}
 
 // ============================== render: alerts / orders log ==============================
 function renderAlerts() {

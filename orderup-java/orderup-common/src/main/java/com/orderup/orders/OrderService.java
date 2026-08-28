@@ -42,6 +42,7 @@ public class OrderService {
     private final RuntimeFlagRepository flags;
     private final TickSizeService tickSizes;
     private final org.springframework.beans.factory.ObjectProvider<KiteAuthService> authProvider;
+    private final org.springframework.beans.factory.ObjectProvider<com.orderup.marketdata.ClassificationService> classifierProvider;
 
     /**
      * Live toggle from the UI. When true, scans/signals still run but no order
@@ -59,7 +60,8 @@ public class OrderService {
                         OrderRecordRepository repo, PotentialOrderRepository potentialRepo,
                         TelegramNotifier notifier, HoldingsService holdings,
                         RuntimeFlagRepository flags, TickSizeService tickSizes,
-                        org.springframework.beans.factory.ObjectProvider<KiteAuthService> authProvider) {
+                        org.springframework.beans.factory.ObjectProvider<KiteAuthService> authProvider,
+                        org.springframework.beans.factory.ObjectProvider<com.orderup.marketdata.ClassificationService> classifierProvider) {
         this.kite = kite;
         this.trading = trading;
         this.repo = repo;
@@ -69,6 +71,7 @@ public class OrderService {
         this.flags = flags;
         this.tickSizes = tickSizes;
         this.authProvider = authProvider;
+        this.classifierProvider = classifierProvider;
     }
 
     @PostConstruct
@@ -296,11 +299,21 @@ public class OrderService {
 
     /**
      * Per-signal metadata for the bracket-order flow. All fields optional; used
-     * by the dashboard for sector/industry roll-ups and by the audit trail.
+     * by the dashboard for sector/industry/market-cap roll-ups and by the
+     * audit trail.
+     *
+     * <p>{@code marketCap} is stamped by the caller when known (from
+     * ClassificationService); {@link #attachMeta} will *also* fall back to the
+     * classifier when meta.marketCap is null, so older call-sites don't have
+     * to know about the new field.
      */
     public record SignalMeta(String alertName, String sector, String industry,
-                             String columnsJson) {
-        public static SignalMeta empty() { return new SignalMeta(null, null, null, null); }
+                             String columnsJson, String marketCap) {
+        public static SignalMeta empty() { return new SignalMeta(null, null, null, null, null); }
+        /** Backwards-compatible convenience for callers that predate marketCap. */
+        public SignalMeta(String alertName, String sector, String industry, String columnsJson) {
+            this(alertName, sector, industry, columnsJson, null);
+        }
     }
 
     /**
@@ -476,9 +489,26 @@ public class OrderService {
             if (rec == null) return;
             boolean dirty = false;
             if (meta.alertName()   != null) { rec.setAlertName(meta.alertName()); dirty = true; }
-            if (meta.sector()      != null) { rec.setSector(meta.sector());       dirty = true; }
+            // Prefer the canonical NSE Industry from ClassificationService when
+            // available — the Chartink payload sector string is inconsistent
+            // across scans. Fall back to the payload value when the symbol is
+            // outside the Nifty 500 universe (classifier returns null).
+            com.orderup.marketdata.ClassificationService classifier =
+                    classifierProvider == null ? null : classifierProvider.getIfAvailable();
+            String canonicalSector = classifier == null ? null : classifier.sectorFor(symbol);
+            if (canonicalSector != null) {
+                rec.setSector(canonicalSector); dirty = true;
+            } else if (meta.sector() != null) {
+                rec.setSector(meta.sector()); dirty = true;
+            }
             if (meta.industry()    != null) { rec.setIndustry(meta.industry());   dirty = true; }
             if (meta.columnsJson() != null) { rec.setColumnsJson(meta.columnsJson()); dirty = true; }
+            // Market cap: prefer whatever the caller passed on meta (it may
+            // have been derived from a more authoritative source), then fall
+            // through to the classifier's AMFI lookup.
+            String mc = meta.marketCap();
+            if (mc == null && classifier != null) mc = classifier.marketCapFor(symbol);
+            if (mc != null) { rec.setMarketCap(mc); dirty = true; }
             if (ocoId    != null) { rec.setKiteOcoGttId(ocoId);    dirty = true; }
             if (slPrice  != null) { rec.setStopLossPrice(slPrice); dirty = true; }
             if (tgtPrice != null) { rec.setTargetPrice(tgtPrice);  dirty = true; }

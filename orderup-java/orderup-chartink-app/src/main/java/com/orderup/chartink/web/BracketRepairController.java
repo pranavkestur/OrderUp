@@ -5,9 +5,13 @@ import com.orderup.orders.OrderRecord;
 import com.orderup.orders.OrderRecordRepository;
 import com.orderup.orders.OrderService;
 import com.orderup.orders.OrderService.BracketResult;
+import com.orderup.pnl.ExitPerformanceService;
 import com.orderup.pnl.PositionService;
+import com.zerodhatech.kiteconnect.KiteConnect;
+import com.zerodhatech.models.Holding;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -48,13 +52,150 @@ public class BracketRepairController {
     private final OrderService orders;
     private final TradingProperties trading;
     private final PositionService positions;
+    private final ExitPerformanceService exitPerformance;
+    private final KiteConnect kite;
+    private final com.orderup.marketdata.ClassificationService classifier;
 
     public BracketRepairController(OrderRecordRepository repo, OrderService orders,
-                                   TradingProperties trading, PositionService positions) {
+                                   TradingProperties trading, PositionService positions,
+                                   ExitPerformanceService exitPerformance, KiteConnect kite,
+                                   com.orderup.marketdata.ClassificationService classifier) {
         this.repo = repo;
         this.orders = orders;
         this.trading = trading;
         this.positions = positions;
+        this.exitPerformance = exitPerformance;
+        this.kite = kite;
+        this.classifier = classifier;
+    }
+
+    // -----------------------------------------------------------------
+    // Classification (sector + AMFI market cap)
+    // -----------------------------------------------------------------
+
+    /**
+     * Re-read {@code classpath:sector-nse500.csv} and the external
+     * {@code data/marketcap-amfi.csv}. Use this after dropping a fresh AMFI
+     * XLSX-derived CSV into the data dir — no app restart needed.
+     */
+    @PostMapping("/reload-classifications")
+    public Map<String, Object> reloadClassifications() {
+        classifier.reload();
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("status", "ok");
+        out.putAll(classifier.stats());
+        return out;
+    }
+
+    /**
+     * Backfill {@code sector} and {@code marketCap} on every existing
+     * OrderRecord that's missing them. Idempotent — walks all rows, only
+     * touches those where the classifier now has an answer the row didn't.
+     * Preserves any non-null value already on the row, so this can't
+     * clobber Chartink-provided sectors for out-of-Nifty-500 symbols.
+     *
+     * <p>Pass {@code force=true} to <b>also overwrite</b> any existing
+     * {@code sector} with the canonical NSE Industry from the classifier
+     * whenever the symbol is in the Nifty 500 universe. Use this once
+     * after the initial import if you want to normalise the old
+     * lowercase Chartink-payload sector strings ({@code "consumer
+     * discretionary"}, {@code "bank"}, {@code "i.t"}, …) into the
+     * canonical NSE names ({@code "Consumer Durables"}, {@code
+     * "Financial Services"}, {@code "Information Technology"}, …).
+     * Rows whose symbol falls outside the Nifty 500 keep their payload
+     * sector — nothing gets nulled out.
+     */
+    @PostMapping("/backfill-classifications")
+    public Map<String, Object> backfillClassifications(
+            @RequestParam(defaultValue = "false") boolean force) {
+        int touched = 0, sectorAdded = 0, sectorOverwritten = 0, mcAdded = 0;
+        for (OrderRecord o : repo.findAll()) {
+            boolean dirty = false;
+            String canonicalSector = classifier.sectorFor(o.getSymbol());
+            String currentSector   = o.getSector();
+            boolean sectorBlank    = currentSector == null || currentSector.isBlank();
+
+            if (sectorBlank && canonicalSector != null) {
+                o.setSector(canonicalSector); dirty = true; sectorAdded++;
+            } else if (force && canonicalSector != null
+                    && !canonicalSector.equalsIgnoreCase(currentSector)) {
+                // Only overwrite when the classifier actually has a canonical
+                // NSE Industry for the symbol; never wipe payload data for
+                // out-of-Nifty-500 tickers where the classifier returns null.
+                o.setSector(canonicalSector); dirty = true; sectorOverwritten++;
+            }
+            if ((o.getMarketCap() == null || o.getMarketCap().isBlank())) {
+                String mc = classifier.marketCapFor(o.getSymbol());
+                if (mc != null) { o.setMarketCap(mc); dirty = true; mcAdded++; }
+            }
+            if (dirty) { repo.save(o); touched++; }
+        }
+        log.info("Classification backfill (force={}): touched={} sectorAdded={} sectorOverwritten={} marketCapAdded={}",
+                force, touched, sectorAdded, sectorOverwritten, mcAdded);
+        return Map.of("touched", touched,
+                      "sectorAdded", sectorAdded,
+                      "sectorOverwritten", sectorOverwritten,
+                      "marketCapAdded", mcAdded,
+                      "force", force);
+    }
+
+    /**
+     * Diagnostic dump of Kite's raw holdings response. Used to figure out why
+     * a symbol the user swears is in their portfolio isn't being recognised
+     * by {@code HoldingsService} (T+1 settlement, usedQuantity spike, etc.).
+     */
+    @GetMapping("/debug-holdings")
+    public java.util.List<java.util.Map<String, Object>> debugHoldings() throws Exception {
+        java.util.List<Holding> raw;
+        try {
+            raw = kite.getHoldings();
+        } catch (Throwable t) {
+            java.util.Map<String, Object> err = new java.util.LinkedHashMap<>();
+            err.put("error", t.getClass().getSimpleName() + ": " + t.getMessage());
+            return java.util.List.of(err);
+        }
+        java.util.List<java.util.Map<String, Object>> out = new java.util.ArrayList<>();
+        for (Holding h : raw) {
+            java.util.Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("symbol", h.tradingSymbol);
+            row.put("quantity", h.quantity);
+            row.put("t1Quantity", h.t1Quantity);
+            row.put("usedQuantity", h.usedQuantity);
+            row.put("realisedQuantity", h.realisedQuantity);
+            row.put("authorisedQuantity", h.authorisedQuantity);
+            row.put("collateralQuantity", h.collateralQuantity);
+            row.put("averagePrice", h.averagePrice);
+            row.put("lastPrice", h.lastPrice);
+            row.put("product", h.product);
+            out.add(row);
+        }
+        return out;
+    }
+
+    /**
+     * Retroactively classify {@code exitType} on SELL rows written before the
+     * exit-classification feature landed. Uses the same
+     * {@code PositionService.classifyExit(sl, tgt, fillPx)} rules that new
+     * SELLs go through: near SL/TGT → tagged, otherwise → {@code MANUAL}.
+     * Idempotent — rows that already have a non-blank {@code exitType} are
+     * left alone.
+     */
+    @PostMapping("/backfill-exit-types")
+    public Map<String, Object> backfillExitTypes() {
+        int updated = positions.backfillExitTypes();
+        return Map.of("updated", updated);
+    }
+
+    /**
+     * Force a run of the post-exit tracking scheduler (normally runs nightly
+     * at 17:00 IST). Returns the number of {@code ExitPerformance} rows
+     * created-or-updated. Safe to hammer — the underlying service short-circuits
+     * rows whose 30d slot is already populated.
+     */
+    @PostMapping("/refresh-exit-performance")
+    public Map<String, Object> refreshExitPerformance() {
+        int touched = exitPerformance.refreshPending();
+        return Map.of("touched", touched);
     }
 
     /**

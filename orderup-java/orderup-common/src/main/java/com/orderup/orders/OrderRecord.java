@@ -37,6 +37,15 @@ public class OrderRecord {
     private String industry;
 
     /**
+     * SEBI/AMFI market-cap category. One of {@code LARGE_CAP},
+     * {@code MID_CAP}, {@code SMALL_CAP}, or {@code null} for unknown /
+     * uncategorised (e.g. fresh IPO or user hasn't refreshed the AMFI file).
+     * Populated at order-write time from {@code ClassificationService}
+     * and backfilled on startup for pre-existing rows.
+     */
+    private String marketCap;
+
+    /**
      * Full Chartink columns[] map for this symbol, serialized as JSON. Kept so the
      * UI's row-drawer can render any custom columns the user later adds without a
      * schema migration. Nullable.
@@ -52,6 +61,17 @@ public class OrderRecord {
 
     /** Configured TGT price at time of BUY. Nullable. */
     private Double targetPrice;
+
+    /**
+     * How a SELL exited. One of {@code SL}, {@code TGT}, {@code SL_APPROX},
+     * {@code MANUAL}, {@code EXPIRED}, {@code UNKNOWN}. Null on BUY rows.
+     * Populated by {@code PositionService.syncExternalSells} (OCO fill →
+     * compare against source BUY's SL/TGT) and
+     * {@code reconcileExternallyClosed} (uses the same tag it already
+     * derives from the triggered GTT leg or the SL fallback). Backfilled
+     * for pre-existing rows via {@code POST /admin/backfill-exit-types}.
+     */
+    private String exitType;
 
     public OrderRecord() {}
 
@@ -82,10 +102,12 @@ public class OrderRecord {
     public String getAlertName() { return alertName; }
     public String getSector() { return sector; }
     public String getIndustry() { return industry; }
+    public String getMarketCap() { return marketCap; }
     public String getColumnsJson() { return columnsJson; }
     public Long getKiteOcoGttId() { return kiteOcoGttId; }
     public Double getStopLossPrice() { return stopLossPrice; }
     public Double getTargetPrice() { return targetPrice; }
+    public String getExitType() { return exitType; }
 
     public void setFilledQty(Integer v) { this.filledQty = v; }
     public void setAvgFillPrice(Double v) { this.avgFillPrice = v; }
@@ -93,9 +115,11 @@ public class OrderRecord {
     public void setAlertName(String v) { this.alertName = v; }
     public void setSector(String v) { this.sector = v; }
     public void setIndustry(String v) { this.industry = v; }
+    public void setMarketCap(String v) { this.marketCap = v; }
     public void setColumnsJson(String v) { this.columnsJson = v; }
     public void setKiteOcoGttId(Long v) { this.kiteOcoGttId = v; }
     public void setStopLossPrice(Double v) { this.stopLossPrice = v; }
     public void setTargetPrice(Double v) { this.targetPrice = v; }
+    public void setExitType(String v) { this.exitType = v; }
 }
 
