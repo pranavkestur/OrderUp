@@ -25,6 +25,16 @@ public class HoldingsService {
     private final KiteAuthService auth;
     private final Map<String, Snapshot> bySymbol = new ConcurrentHashMap<>();
     private volatile long lastRefreshMs = 0L;
+    /**
+     * Timestamp of the last {@link #refresh()} call where {@code kite.getHoldings()}
+     * actually returned a value (even an empty list). Distinguishes "user has
+     * zero holdings" (safe to trust an empty {@link #snapshot()}) from "we
+     * never got a good answer from Kite" (empty {@link #snapshot()} is
+     * meaningless and MUST NOT be treated as authoritative — the reconciler
+     * would otherwise synthesise phantom SELLs for every persisted BUY).
+     * Zero until the first successful call.
+     */
+    private volatile long lastSuccessfulRefreshMs = 0L;
 
     public HoldingsService(KiteConnect kite, KiteAuthService auth) {
         this.kite = kite;
@@ -35,17 +45,39 @@ public class HoldingsService {
         if (!auth.isAuthenticated()) return;
         try {
             List<Holding> list = kite.getHoldings();
-            bySymbol.clear();
+            // Build the new snapshot in a temp map so a partial parse never
+            // exposes a half-populated view to concurrent readers. Only
+            // swap once the whole payload has been consumed.
+            Map<String, Snapshot> next = new HashMap<>();
             for (Holding h : list) {
                 if (h.tradingSymbol == null) continue;
-                int qty = h.quantity - h.usedQuantity;
+                // Effective ownership must include T+1 quantities: a CNC BUY
+                // from the previous trading day is financially settled and can
+                // be sold, but Kite reports it as {quantity=0, t1Quantity=N}
+                // until it lands in the demat account the next day. Ignoring
+                // t1Quantity here causes the OCO reconciler to treat a
+                // just-bought position as "not held" the very next morning
+                // and synthesise a phantom SL_APPROX SELL against it. This
+                // is exactly the failure mode that keeps closing BHEL / any
+                // Aug 27 BUY around 10:20 IST on Aug 28.
+                int qty = h.quantity + h.t1Quantity - h.usedQuantity;
                 if (qty <= 0) continue;
-                bySymbol.put(h.tradingSymbol.toUpperCase(Locale.ROOT),
+                // Average price is meaningful only when `quantity` is non-zero.
+                // For pure T+1 holdings Kite still reports the buy avg on the
+                // holding, so pass it through as-is; downstream code just uses
+                // it for the Open-Positions display.
+                next.put(h.tradingSymbol.toUpperCase(Locale.ROOT),
                         new Snapshot(qty, h.averagePrice));
             }
-            lastRefreshMs = System.currentTimeMillis();
+            bySymbol.clear();
+            bySymbol.putAll(next);
+            long now = System.currentTimeMillis();
+            lastRefreshMs = now;
+            lastSuccessfulRefreshMs = now;
             log.info("Holdings refreshed — {} symbols in portfolio", bySymbol.size());
         } catch (Throwable e) {
+            // Deliberately do NOT touch bySymbol on failure. A stale cache is
+            // strictly safer than an empty one for the reconciler.
             log.warn("Holdings refresh failed: {}", e.getMessage());
         }
     }
@@ -53,6 +85,16 @@ public class HoldingsService {
     /** Refresh only if data is older than {@code maxAgeMs}. Cheap for the UI. */
     public void refreshIfStale(long maxAgeMs) {
         if (System.currentTimeMillis() - lastRefreshMs > maxAgeMs) refresh();
+    }
+
+    /**
+     * True once {@link #refresh()} has completed at least one successful call
+     * to {@code kite.getHoldings()}. Consumers that make destructive decisions
+     * based on {@link #snapshot()} being empty (e.g. the OCO reconciler) MUST
+     * check this first and bail out otherwise.
+     */
+    public boolean hasEverLoaded() {
+        return lastSuccessfulRefreshMs > 0L;
     }
 
     public int quantity(String symbol) {

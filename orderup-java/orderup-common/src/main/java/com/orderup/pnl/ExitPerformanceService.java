@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import java.text.SimpleDateFormat;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.*;
 
@@ -48,15 +49,18 @@ public class ExitPerformanceService {
     private final ExitPerformanceRepository exitRepo;
     private final KiteConnect kite;
     private final InstrumentService instruments;
+    private final PriceHistoryService priceHistory;
 
     public ExitPerformanceService(OrderRecordRepository orders,
                                   ExitPerformanceRepository exitRepo,
                                   KiteConnect kite,
-                                  InstrumentService instruments) {
+                                  InstrumentService instruments,
+                                  PriceHistoryService priceHistory) {
         this.orders = orders;
         this.exitRepo = exitRepo;
         this.kite = kite;
         this.instruments = instruments;
+        this.priceHistory = priceHistory;
     }
 
     /**
@@ -85,12 +89,36 @@ public class ExitPerformanceService {
     public int refreshPending() {
         Instant cutoff = Instant.now().minus(MAX_LOOKBACK);
         List<OrderRecord> sells = new ArrayList<>();
+        List<OrderRecord> buys  = new ArrayList<>();
         for (OrderRecord o : orders.findAll()) {
-            if (!"SELL".equalsIgnoreCase(o.getSide())) continue;
             if (o.getPlacedAt() == null || o.getPlacedAt().isBefore(cutoff)) continue;
-            if (o.getAvgFillPrice() == null || o.getAvgFillPrice() <= 0) continue;
-            sells.add(o);
+            if ("SELL".equalsIgnoreCase(o.getSide())) {
+                if (o.getAvgFillPrice() == null || o.getAvgFillPrice() <= 0) continue;
+                sells.add(o);
+            } else if ("BUY".equalsIgnoreCase(o.getSide())) {
+                buys.add(o);
+            }
         }
+        // Snapshot candles for every BUY in the lookback window into the
+        // persistent PriceCacheEntry table so the "post-entry price journey"
+        // drawer loads instantly the next morning (feature #8). Cheap — most
+        // rows already exist and PriceHistoryService only fetches the tail.
+        for (OrderRecord buy : buys) {
+            LocalDate entryDate = buy.getPlacedAt().atZone(IST).toLocalDate();
+            priceHistory.snapshot(buy.getSymbol(), entryDate, 40);
+        }
+        // Also snapshot NIFTY 50 once — it's the default benchmark overlay.
+        if (!buys.isEmpty()) {
+            LocalDate earliest = buys.stream()
+                    .map(b -> b.getPlacedAt().atZone(IST).toLocalDate())
+                    .min(LocalDate::compareTo).orElse(LocalDate.now(IST));
+            try {
+                priceHistory.fetchBenchmark("NIFTY 50", earliest, 10, 60);
+            } catch (Throwable t) {
+                log.debug("nightly NIFTY 50 snapshot failed: {}", t.getMessage());
+            }
+        }
+
         if (sells.isEmpty()) return 0;
 
         Map<Long, ExitPerformance> existing = new HashMap<>();
