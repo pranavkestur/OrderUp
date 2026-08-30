@@ -1,0 +1,18 @@
+# =============================================================================
+# orderup.target — groups the four OrderUp units so you can start/stop the
+# whole stack with one command:
+#
+#   systemctl --user start   orderup.target
+#   systemctl --user stop    orderup.target
+#   systemctl --user status  orderup.target
+#
+# Individual units still work — this is just a bundle.
+# =============================================================================
+[Unit]
+Description=OrderUp full stack (chartink + launcher + ngrok)
+Wants=orderup-chartink.service orderup-launcher.service orderup-ngrok.service
+After=orderup-chartink.service orderup-launcher.service orderup-ngrok.service
+
+[Install]
+WantedBy=default.target
+

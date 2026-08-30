@@ -27,3 +27,7 @@ trading_bot.log
 .DS_Store
 Thumbs.db
 
+# OrderUp deploy secrets (real env lives on the VPS, never in git)
+orderup-java/deploy/systemd/orderup.env
+orderup-java/deploy/systemd/orderup.env.local
+

@@ -1,0 +1,43 @@
+# =============================================================================
+# orderup-launcher.service — Python control daemon + reverse proxy on :8080.
+#
+# Same script (deploy/orderup-launcher.py) that ran under launchd on macOS.
+# Handles /lifecycle/{secret}/{app}/{action} locally and reverse-proxies
+# everything else to 127.0.0.1:$UPSTREAM_PORT (chartink Spring Boot on 8090).
+#
+# The systemctl targets ("chartink", "trading", "ngrok", "launcher-self")
+# are mapped to systemd unit names inside the Python -- see the ALLOWED_LABELS
+# dict at the top of orderup-launcher.py. For the VPS we substitute the
+# .plist paths with .service names via env vars or a Linux-mode branch (the
+# unified script already reads UPSTREAM_HOST / UPSTREAM_PORT from env; the
+# lifecycle actions use `systemctl --user` on Linux via the same helper --
+# see the platform check in _act()).
+# =============================================================================
+[Unit]
+Description=OrderUp launcher (control daemon + reverse proxy)
+After=network-online.target
+Wants=network-online.target
+PartOf=orderup.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/orderup/orderup-java
+EnvironmentFile=/opt/orderup/orderup.env
+
+# -u = unbuffered stdout so journald sees log lines immediately.
+ExecStart=/usr/bin/python3 -u /opt/orderup/orderup-java/deploy/orderup-launcher.py
+
+# The launcher itself must survive anything short of the VM dying, because
+# it's the only way to bring chartink back up remotely from a phone.
+Restart=always
+RestartSec=5
+StartLimitBurst=10
+StartLimitIntervalSec=60
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=orderup-launcher
+
+[Install]
+WantedBy=orderup.target
+

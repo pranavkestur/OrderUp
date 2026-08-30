@@ -1,0 +1,39 @@
+# =============================================================================
+# orderup-ngrok.service — public HTTPS ingress via reserved static domain.
+#
+# Same free-tier ngrok setup you have on the Mac. The agent forwards
+# https://$NGROK_STATIC_DOMAIN -> http://localhost:$LAUNCHER_PORT (default 8080)
+# where the launcher is listening. Your Chartink alert URL, iOS Shortcuts, and
+# dashboard URL do NOT change when we migrate — you keep the same
+# marbles-pamphlet-wages.ngrok-free.dev domain.
+#
+# The ngrok authtoken lives in ~/.config/ngrok/ngrok.yml, written once by
+# vps-bootstrap.sh via `ngrok config add-authtoken $NGROK_AUTHTOKEN`.
+# =============================================================================
+[Unit]
+Description=OrderUp ngrok tunnel (public HTTPS -> local launcher)
+After=network-online.target
+Wants=network-online.target
+PartOf=orderup.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/orderup
+EnvironmentFile=/opt/orderup/orderup.env
+
+ExecStart=/usr/local/bin/ngrok http ${LAUNCHER_PORT} \
+    --url=https://${NGROK_STATIC_DOMAIN} \
+    --log=stdout --log-format=logfmt
+
+Restart=always
+RestartSec=10
+StartLimitBurst=5
+StartLimitIntervalSec=120
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=orderup-ngrok
+
+[Install]
+WantedBy=orderup.target
+

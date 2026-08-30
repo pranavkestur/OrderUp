@@ -1,0 +1,52 @@
+# =============================================================================
+# orderup-chartink.service — Spring Boot trading app (Java 21).
+#
+# Twin of com.orderup.chartink.plist on the Mac. Listens on 127.0.0.1:$SERVER_PORT
+# (default 8090), fronted by the launcher reverse proxy on 8080.
+#
+# systemctl commands (as your VPS user):
+#   systemctl --user start   orderup-chartink
+#   systemctl --user stop    orderup-chartink
+#   systemctl --user restart orderup-chartink
+#   systemctl --user status  orderup-chartink
+#   journalctl --user -u orderup-chartink -f      # live log tail
+# =============================================================================
+[Unit]
+Description=OrderUp Chartink trading app (Spring Boot)
+After=network-online.target
+Wants=network-online.target
+# Don't start if the reverse-proxy launcher won't; launcher pulls chartink up.
+PartOf=orderup.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/orderup/orderup-java/orderup-chartink-app
+EnvironmentFile=/opt/orderup/orderup.env
+
+# Java flags:
+#   -Xmx1g          hard cap so the JVM cannot starve the Python launcher / ngrok.
+#                   Ampere free tier has 24 GB pooled; 1 GB is plenty for us.
+#   -XX:+UseZGC     low-pause GC — smoother P&L polling under load.
+#   -Dfile.encoding=UTF-8   Chartink payloads have unicode (₹, arrows, etc.)
+ExecStart=/usr/bin/env bash -lc 'exec "$JAVA_HOME/bin/java" \
+    -Xmx1g -XX:+UseZGC -Dfile.encoding=UTF-8 \
+    -jar target/orderup-chartink-app-0.1.0.jar'
+
+# Data on disk (H2 db + snapshots + logs) lives under WorkingDirectory. Never
+# blow it away on restart; systemd's default is fine here.
+
+# Auto-restart on crash, but back off if it's flapping so we don't spin the CPU.
+Restart=on-failure
+RestartSec=10
+StartLimitBurst=5
+StartLimitIntervalSec=120
+
+# Logging: journald captures stdout/stderr. The Java Logback config still writes
+# rotating files under logs/ for long-term auditing.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=orderup-chartink
+
+[Install]
+WantedBy=orderup.target
+

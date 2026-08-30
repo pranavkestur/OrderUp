@@ -91,6 +91,20 @@ public class BenchmarkService {
         return out;
     }
 
+    /** Ordered list of the canonical NSE <em>sector</em> indices only
+     *  (excludes NIFTY 50). Used by the Heatmap page which wants tiles for
+     *  sectors, not the broad-market index. */
+    public List<String> sectorBenchmarks() {
+        return new java.util.ArrayList<>(SECTOR_KEYWORDS.keySet());
+    }
+
+    /** Immutable snapshot of the {@code sector-index → keywords} routing
+     *  table. Consumers (HeatmapService) invert this to bucket free-form
+     *  NSE Industry strings into sector-index tiles. */
+    public Map<String, String[]> sectorKeywordTable() {
+        return java.util.Collections.unmodifiableMap(SECTOR_KEYWORDS);
+    }
+
     private synchronized void ensureLoaded() {
         if (nameToToken != null) return;
         try {

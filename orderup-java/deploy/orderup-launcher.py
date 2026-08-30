@@ -20,6 +20,7 @@ import http.server
 import http.client
 import json
 import os
+import platform
 import socket
 import subprocess
 from urllib.parse import urlsplit
@@ -30,16 +31,30 @@ UPSTREAM_HOST = os.environ.get("UPSTREAM_HOST", "127.0.0.1")
 UPSTREAM_PORT = int(os.environ.get("UPSTREAM_PORT", "8090"))
 UID           = os.getuid()
 
+# Platform detection — macOS uses launchctl + plists, Linux uses systemctl
+# --user + .service unit names. Everything else in this file is portable.
+IS_MAC = platform.system() == "Darwin"
+
 # Guardrail: only these labels can be controlled, so a leaked secret cannot
-# be used to poke arbitrary launchd services. Value is (label, plist path) —
-# we need the plist path for `launchctl bootstrap` on start.
-_LA = os.path.expanduser("~/Library/LaunchAgents")
-ALLOWED_LABELS = {
-    "chartink":      ("com.orderup.chartink", "%s/com.orderup.chartink.plist" % _LA),
-    "trading":       ("com.orderup.trading",  "%s/com.orderup.trading.plist"  % _LA),
-    "ngrok":         ("com.orderup.ngrok",    "%s/com.orderup.ngrok.plist"    % _LA),
-    "launcher-self": ("com.orderup.launcher", "%s/com.orderup.launcher.plist" % _LA),
-}
+# be used to poke arbitrary services. Value is (label, unit_or_plist_path):
+# on macOS the second element is the .plist path (needed by launchctl bootstrap),
+# on Linux it is the systemd unit name (redundant with the first field but kept
+# for symmetry — systemctl commands only need the unit name).
+if IS_MAC:
+    _LA = os.path.expanduser("~/Library/LaunchAgents")
+    ALLOWED_LABELS = {
+        "chartink":      ("com.orderup.chartink", "%s/com.orderup.chartink.plist" % _LA),
+        "trading":       ("com.orderup.trading",  "%s/com.orderup.trading.plist"  % _LA),
+        "ngrok":         ("com.orderup.ngrok",    "%s/com.orderup.ngrok.plist"    % _LA),
+        "launcher-self": ("com.orderup.launcher", "%s/com.orderup.launcher.plist" % _LA),
+    }
+else:
+    ALLOWED_LABELS = {
+        "chartink":      ("orderup-chartink.service", "orderup-chartink.service"),
+        "trading":       ("orderup-trading.service",  "orderup-trading.service"),
+        "ngrok":         ("orderup-ngrok.service",    "orderup-ngrok.service"),
+        "launcher-self": ("orderup-launcher.service", "orderup-launcher.service"),
+    }
 
 # RFC 7230 hop-by-hop headers + Host + Content-Length: we manage these
 # ourselves, never blindly forward.
@@ -54,46 +69,76 @@ def _run(cmd):
 
 
 def _target(label):
-    return "gui/%d/%s" % (UID, label)
+    # On macOS the "domain-specifier" form is gui/<uid>/<label>. On Linux we
+    # just use the systemd unit name — systemctl --user takes it directly.
+    return "gui/%d/%s" % (UID, label) if IS_MAC else label
 
 
 def _status(label):
-    rc, out = _run(["launchctl", "print", _target(label)])
+    if IS_MAC:
+        rc, out = _run(["launchctl", "print", _target(label)])
+        if rc != 0:
+            return {"label": label, "loaded": False, "state": "stopped"}
+        info = {"label": label, "loaded": True}
+        for line in out.splitlines():
+            line = line.strip()
+            for key in ("pid =", "state =", "last exit code ="):
+                if line.startswith(key):
+                    k = key.rstrip(" =").replace(" ", "_")
+                    info[k] = line.split("=", 1)[1].strip()
+        return info
+
+    # Linux: systemctl show gives machine-readable key=value pairs. `Result`
+    # (start-limit-hit, exit-code, etc.) plus ActiveState + MainPID cover the
+    # same three fields the Mac branch surfaces.
+    rc, out = _run(["systemctl", "--user", "show", label,
+                    "--property=ActiveState,SubState,MainPID,Result,ExecMainStatus"])
     if rc != 0:
-        # Not-loaded is the expected state after a Stop — surface it as such
-        # rather than a scary "raw" dump.
         return {"label": label, "loaded": False, "state": "stopped"}
-    info = {"label": label, "loaded": True}
+    kv = {}
     for line in out.splitlines():
-        line = line.strip()
-        for key in ("pid =", "state =", "last exit code ="):
-            if line.startswith(key):
-                k = key.rstrip(" =").replace(" ", "_")
-                info[k] = line.split("=", 1)[1].strip()
-    return info
+        if "=" in line:
+            k, v = line.split("=", 1)
+            kv[k.strip()] = v.strip()
+    active = kv.get("ActiveState", "unknown")
+    return {
+        "label":          label,
+        "loaded":         active in ("active", "activating"),
+        "state":          "active" if active == "active" else "stopped",
+        "pid":            kv.get("MainPID", "0"),
+        "last_exit_code": kv.get("ExecMainStatus", "0"),
+        "sub_state":      kv.get("SubState", ""),
+        "last_result":    kv.get("Result", ""),
+    }
 
 
 def _act(entry, action):
-    label, plist_path = entry
+    label, unit_or_plist = entry
     tgt = _target(label)
-    domain = "gui/%d" % UID
+    if IS_MAC:
+        domain = "gui/%d" % UID
+        if action == "start":
+            _run(["launchctl", "bootstrap", domain, unit_or_plist])
+            return _run(["launchctl", "kickstart", tgt])
+        if action == "stop":
+            # bootout removes the job from the domain entirely — KeepAlive
+            # cannot respawn what is not loaded.
+            return _run(["launchctl", "bootout", tgt])
+        if action == "restart":
+            _run(["launchctl", "bootstrap", domain, unit_or_plist])
+            return _run(["launchctl", "kickstart", "-k", tgt])
+        return 2, "unknown action"
+
+    # Linux (systemd user manager).
     if action == "start":
-        # `bootstrap` (re-)loads the job from its plist. RunAtLoad=true on the
-        # plist means the process spawns immediately. If it's already loaded
-        # this returns an error, which we swallow — a subsequent kickstart
-        # ensures the process is up regardless.
-        _run(["launchctl", "bootstrap", domain, plist_path])
-        return _run(["launchctl", "kickstart", tgt])
+        return _run(["systemctl", "--user", "start", tgt])
     if action == "stop":
-        # `bootout` removes the job from the launchd domain entirely (also
-        # SIGTERMs the running process). KeepAlive=true cannot respawn what
-        # is no longer loaded, so the app stays down until a Start.
-        return _run(["launchctl", "bootout", tgt])
+        # `stop` is the systemd equivalent of bootout: sends SIGTERM, waits
+        # for the process to exit, and does NOT respawn (Restart= directives
+        # only apply to abnormal exit, not to explicit stop).
+        return _run(["systemctl", "--user", "stop", tgt])
     if action == "restart":
-        # Bootstrap the plist if it isn't loaded (recovers from a prior Stop),
-        # then kickstart -k = SIGKILL current + spawn fresh in one call.
-        _run(["launchctl", "bootstrap", domain, plist_path])
-        return _run(["launchctl", "kickstart", "-k", tgt])
+        return _run(["systemctl", "--user", "restart", tgt])
     return 2, "unknown action"
 
 

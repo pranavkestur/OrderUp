@@ -103,6 +103,16 @@ public class ClassificationService {
                       "marketCaps", symbolToMarketCap.size());
     }
 
+    /**
+     * Immutable snapshot of the full {@code symbol → NSE Industry} map.
+     * Used by services that need to invert the mapping (e.g. HeatmapService
+     * building a {@code sector-index → constituent symbols} lookup). The
+     * returned map is safe to iterate concurrently.
+     */
+    public Map<String, String> allSymbolSectors() {
+        return symbolToSector; // already Map.copyOf(...) — immutable
+    }
+
     // -----------------------------------------------------------------
     // Loaders
     // -----------------------------------------------------------------

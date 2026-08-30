@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="OrderUp">
 <meta name="theme-color" content="#0f1420">
-<title>OrderUp · Chartink P&L</title>
+<title>OrderUp · P&L</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
   :root {
@@ -32,6 +32,60 @@
   .meta-strip { color:var(--dim); font-size:12px; margin-top:4px }
   .meta-strip span { margin-right:14px }
   .controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap }
+
+  /* Market context pill — NIFTY 50 today %change + minutes to open/close.
+     Sits in the header controls row so a trader can glance at "was this a
+     market move?" without opening the price-journey drawer. */
+  .market-pill { display:inline-flex; align-items:center; gap:6px;
+                 padding:5px 10px; border-radius:10px; font-size:12px;
+                 background:var(--card-2); border:1px solid var(--border);
+                 color:var(--dim); font-variant-numeric:tabular-nums }
+  .market-pill .mp-idx  { color:var(--text); font-weight:600 }
+  .market-pill .mp-idx .pos { color:var(--green) }
+  .market-pill .mp-idx .neg { color:var(--red) }
+  .market-pill .mp-sep  { color:var(--muted) }
+  .market-pill .mp-clock { color:var(--dim) }
+  .market-pill.closed .mp-clock { color:var(--muted); font-style:italic }
+
+  /* Tab bar — lives *inside* the header, centred between the brand (left)
+     and the controls cluster (right). Uses margin:auto in a flex row to
+     hug the horizontal centre regardless of how wide the two edges get.
+     Active tab gets a blue underline; the rest are muted. Hash-driven so
+     browser back/forward + bookmarks just work. */
+  /* Segmented tab control — sits inside the header, centred between the
+     brand and the controls cluster. Design goals:
+       - No hard outer border (was the "box-in-a-box" look). Instead a very
+         soft translucent surface that reads as a grouping, not a container.
+       - Active tab is an elevated solid pill with a coloured tint + drop
+         shadow so it feels like it's "lifted" out of the group.
+       - Inactive tabs are text-only until hovered, so the tab bar reads as
+         type on a subtle mat, not a stack of buttons.
+       - Hash-driven state (see initTabs) unchanged. */
+  .tabs { display:flex; gap:2px; margin:0 auto;
+          background:rgba(255,255,255,0.04);
+          border-radius:12px; padding:4px;
+          box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04) }
+  .tab { position:relative; display:inline-block; padding:7px 20px;
+         color:var(--dim); text-decoration:none;
+         font-size:13px; font-weight:600; letter-spacing:.3px;
+         border-radius:8px; cursor:pointer;
+         transition:color .18s ease, background .18s ease,
+                    box-shadow .18s ease, transform .12s ease }
+  .tab:hover { color:var(--text); background:rgba(255,255,255,0.05) }
+  .tab.active {
+    color:#fff;
+    background:linear-gradient(180deg, rgba(91,157,255,0.28), rgba(91,157,255,0.18));
+    box-shadow: 0 1px 0 rgba(255,255,255,0.08) inset,
+                0 2px 8px rgba(91,157,255,0.25),
+                0 0 0 1px rgba(91,157,255,0.35);
+  }
+  .tab.active:hover { background:linear-gradient(180deg, rgba(91,157,255,0.34), rgba(91,157,255,0.22)) }
+  .tab:active { transform:scale(0.97) }
+
+  /* Placeholder body for tabs not yet built out. Centred + muted so the
+     empty state looks intentional. */
+  .tab-placeholder { text-align:center; padding:80px 20px; color:var(--muted) }
+  .tab-placeholder h2 { color:var(--dim); font-weight:600; margin:0 0 8px 0 }
   .btn { background:var(--card-2); border:1px solid var(--border); color:var(--text);
          padding:7px 12px; border-radius:6px; cursor:pointer; font-size:13px; font-weight:600 }
   .btn:hover { border-color:var(--blue) }
@@ -66,6 +120,11 @@
   .range-card .rc-label { color:var(--dim); font-size:10px; text-transform:uppercase; font-weight:600; letter-spacing:.6px }
   .range-card .rc-value { font-size:18px; font-weight:700; margin-top:5px; font-variant-numeric:tabular-nums }
   .range-card .rc-sub   { font-size:12px; color:var(--dim); margin-top:2px }
+
+  /* Neutral currency glyph — keeps the ₹ from picking up the surrounding
+     .pos / .neg colour, which read as "₹ → −801" (a range) instead of
+     "negative eight-hundred-and-one rupees". Slightly dimmed vs the digits. */
+  .curr { color: var(--muted); font-weight:500; margin-right:2px }
 
   /* Charts row — three columns: equity trend (widest for the time-series
      shape), market-cap doughnut in the middle (compact, glanceable), sector
@@ -156,6 +215,35 @@
   .chip.active { background:var(--blue); color:#0a1020; border-color:var(--blue) }
   .chip:hover:not(.active) { border-color:var(--blue) }
 
+  /* Compact filter row for Closed Trades (replaces the two chip rows).
+     Sector goes into a dropdown (long tail of values), Cap is a segmented
+     pill row with only ever 4 buttons (All / LG / MD / SM). One line total,
+     regardless of how many sectors exist. */
+  .filter-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+                margin-bottom:12px; font-size:12px }
+  .fr-label { color:var(--muted); text-transform:uppercase; letter-spacing:.4px;
+              font-size:10px; font-weight:600 }
+  .fr-select { background:var(--card-2); color:var(--text); border:1px solid var(--border);
+               border-radius:6px; padding:5px 10px; font-size:12px; font-weight:600;
+               cursor:pointer; min-width:180px }
+  .fr-select:focus { outline:none; border-color:var(--blue) }
+  .fr-clear { background:transparent; color:var(--muted); border:1px solid var(--border);
+              border-radius:6px; padding:4px 10px; font-size:11px; cursor:pointer;
+              margin-left:auto }
+  .fr-clear:hover { color:var(--text); border-color:var(--red) }
+
+  .cap-seg { display:inline-flex; background:var(--card-2); border:1px solid var(--border);
+             border-radius:6px; overflow:hidden; padding:2px }
+  .cap-seg .seg { padding:4px 12px; font-size:11px; font-weight:700; letter-spacing:.4px;
+                  color:var(--dim); cursor:pointer; border-radius:4px;
+                  transition:color .12s ease, background .12s ease; user-select:none }
+  .cap-seg .seg:hover:not(.disabled):not(.active) { color:var(--text) }
+  .cap-seg .seg.active.all   { background:var(--blue); color:#0a1020 }
+  .cap-seg .seg.active.large { background:rgba(91,157,255,.25); color:var(--blue) }
+  .cap-seg .seg.active.mid   { background:rgba(245,196,81,.22); color:var(--yellow) }
+  .cap-seg .seg.active.small { background:rgba(255,92,124,.22); color:var(--red) }
+  .cap-seg .seg.disabled { color:var(--muted); opacity:.35; cursor:not-allowed }
+
   /* Alerts log (collapsible) */
   details.card > summary { list-style:none; cursor:pointer; user-select:none }
   details.card > summary::-webkit-details-marker { display:none }
@@ -220,12 +308,16 @@
       flex-direction:column; align-items:stretch;
     }
     header h1 { font-size:16px; justify-content:space-between }
-    header h1 small { display:none } /* "· Chartink P&L" subtitle hidden — save space */
+    header h1 small { display:none } /* subtitle hidden on phone — save space */
     .meta-strip { font-size:11px; margin-top:2px }
     .meta-strip span { margin-right:10px; display:inline-block }
     .controls { width:100%; justify-content:space-between }
     .controls .btn { flex:1; min-width:0; padding:9px 8px; font-size:12px; text-align:center }
     .badge { font-size:10px; padding:3px 8px }
+    /* On phone the header stacks vertically; make the tab pill full-width
+       and centre-align its children so it doesn't look orphaned. */
+    .tabs { width:100%; justify-content:center; margin:2px 0 }
+    .tab { flex:1; text-align:center; padding:6px 10px }
 
     main { padding:12px 10px }
 
@@ -295,20 +387,34 @@
 <body>
 
 <header>
-  <div>
-    <h1>OrderUp · Chartink <small id="userMeta"></small></h1>
-    <div class="meta-strip" id="metaStrip">Loading…</div>
+  <div class="brand">
+    <h1>OrderUp <small id="userMeta">P&L dashboard</small></h1>
   </div>
+  <!-- Top-level tabs live inside the header, centred between the brand
+       (left) and status controls (right). Only Home is populated today;
+       Trades + Heatmap are empty scaffolds. Tab state mirrors location.hash
+       so browser back/forward + bookmarks work. -->
+  <nav class="tabs" id="tabs">
+    <a class="tab active" data-tab="home"    href="#home">Home</a>
+    <a class="tab"        data-tab="trades"  href="#trades">Trades</a>
+    <a class="tab"        data-tab="heatmap" href="#heatmap">Heatmap</a>
+  </nav>
   <div class="controls">
-    <span id="armedBadge" class="badge notready">⛔ NOT READY</span>
-    <span id="modeBadge"  class="badge dry">🟠 DRY MODE</span>
+    <span id="marketPill" class="market-pill" title="NIFTY 50 today · minutes to market open/close (IST)">
+      <span class="mp-idx">NIFTY <span id="mp-nifty">—</span></span>
+      <span class="mp-sep">·</span>
+      <span class="mp-clock" id="mp-clock">—</span>
+    </span>
+    <span id="statusBadge" class="badge notready">⛔ NOT READY</span>
     <button class="btn success" id="enableBtn"  style="display:none">✅ Enable orders</button>
     <button class="btn danger"  id="disableBtn" style="display:none">🚫 Disable orders</button>
-    <button class="btn" id="refreshBtn">↻ Refresh</button>
   </div>
 </header>
 
+
 <main>
+  <!-- ============================== HOME tab ============================== -->
+  <section class="page" id="page-home">
   <!-- Hero KPIs -->
   <div class="kpi-grid" id="kpiGrid">
     <div class="kpi"><div class="label">Capital deployed</div><div class="value" id="kpi-deployed">—</div><div class="sub" id="kpi-deployed-sub">—</div></div>
@@ -386,39 +492,6 @@
     </div>
   </div>
 
-  <!-- Open positions -->
-  <div class="card">
-    <h3>Open positions <span class="h3-actions" id="opCount">0</span></h3>
-    <div class="table-scroll">
-      <table id="openTable">
-        <thead><tr>
-          <th>Symbol</th><th>Sector</th><th>Cap</th><th class="right">Qty</th><th class="right">Buy ₹</th>
-          <th class="right">LTP ₹</th><th class="right">SL ₹</th><th class="right">TGT ₹</th>
-          <th class="right">Unreal ₹</th><th class="right">Unreal %</th><th>Held</th><th>Opened by</th>
-        </tr></thead>
-        <tbody id="openBody"><tr><td colspan="12" class="empty">Awaiting first fire</td></tr></tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- Closed trades -->
-  <div class="card">
-    <h3>Closed trades <span class="h3-actions"><span id="ct-range-label">last 30d</span> · <span id="ctCount">0</span> rows</span></h3>
-    <div class="chips" id="sectorChips"></div>
-    <div class="chips" id="mcapChips"></div>
-    <div class="table-scroll">
-      <table id="closedTable">
-        <thead><tr>
-          <th>Entry</th><th>Exit</th><th>Symbol</th><th>Sector</th><th>Cap</th><th>Exit</th><th class="right">Qty</th>
-          <th class="right">Buy ₹</th><th class="right">Sell ₹</th><th class="right">P&amp;L ₹</th>
-          <th class="right">P&amp;L %</th><th class="right">Held</th>
-        </tr></thead>
-        <tbody id="closedBody"><tr><td colspan="12" class="empty">Awaiting first SELL — brackets fire automatically on ±SL/+TGT hit.</td></tr></tbody>
-      </table>
-    </div>
-    <div class="table-footer" id="closedFooter"></div>
-  </div>
-
   <!-- Alerts log (collapsible) -->
   <details class="card" id="alertsCard">
     <summary><h3 style="display:inline">Chartink alerts log <span class="h3-actions">today's webhooks</span></h3></summary>
@@ -432,6 +505,95 @@
       </table>
     </div>
   </details>
+  </section><!-- /page-home -->
+
+  <!-- ============================== TRADES tab ============================== -->
+  <!-- Open Positions + Closed Trades tables moved here from Home. Nothing
+       about the render / drawer / filter chip logic changes — the elements
+       kept their original IDs so renderOpen(), renderClosed(), renderChips()
+       and the openPriceDrawer() links all continue to work as-is. -->
+  <section class="page" id="page-trades" hidden>
+
+    <!-- Open positions -->
+    <div class="card">
+      <h3>Open positions <span class="h3-actions" id="opCount">0</span></h3>
+      <div class="table-scroll">
+        <table id="openTable">
+          <thead><tr>
+            <th>Symbol</th><th>Sector</th><th>Cap</th><th class="right">Qty</th><th class="right">Buy ₹</th>
+            <th class="right">LTP ₹</th><th class="right">SL ₹</th><th class="right">TGT ₹</th>
+            <th class="right">Unreal ₹</th><th class="right">Unreal %</th><th>Held</th><th>Opened by</th>
+          </tr></thead>
+          <tbody id="openBody"><tr><td colspan="12" class="empty">Awaiting first fire</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Closed trades -->
+    <div class="card">
+      <h3>Closed trades <span class="h3-actions"><span id="ct-range-label">last 30d</span> · <span id="ctCount">0</span> rows</span></h3>
+      <!-- Compact filter row: sector dropdown + cap segmented pill. Collapses
+           the two long chip rows this replaced into a single line, and hides
+           zero-count cap buckets so they don't render as ghost pills. -->
+      <div class="filter-row" id="closedFilterRow">
+        <label class="fr-label" for="sectorFilterSel">Sector</label>
+        <select id="sectorFilterSel" class="fr-select" onchange="onSectorSelectChange(this.value)">
+          <option value="">All sectors</option>
+        </select>
+        <label class="fr-label" style="margin-left:14px">Cap</label>
+        <div class="cap-seg" id="capSeg" role="tablist"></div>
+        <button class="fr-clear" id="clearFiltersBtn" onclick="clearAllClosedFilters()" hidden>× Clear</button>
+      </div>
+      <div class="table-scroll">
+        <table id="closedTable">
+          <thead><tr>
+            <th>Entry</th><th>Exit</th><th>Symbol</th><th>Sector</th><th>Cap</th><th>Exit</th><th class="right">Qty</th>
+            <th class="right">Buy ₹</th><th class="right">Sell ₹</th><th class="right">P&amp;L ₹</th>
+            <th class="right">P&amp;L %</th><th class="right">Held</th>
+          </tr></thead>
+          <tbody id="closedBody"><tr><td colspan="12" class="empty">Awaiting first SELL — brackets fire automatically on ±SL/+TGT hit.</td></tr></tbody>
+        </table>
+      </div>
+      <div class="table-footer" id="closedFooter"></div>
+    </div>
+  </section>
+
+  <!-- ============================== HEATMAP tab ============================== -->
+  <!-- Live sector-movement view, independent of the user's own trades.
+       Default view: one tile per canonical NIFTY sector index (13 tiles),
+       coloured by intraday % change vs previous close. Clicking a sector
+       tile drills into its Nifty-500 constituents. Auto-refreshes every
+       1 minute while the tab is active; manual refresh available. -->
+  <section class="page" id="page-heatmap" hidden>
+    <div class="hm-header">
+      <div class="hm-crumb" id="hmCrumb">
+        <span id="hmCrumbSectors" class="hm-crumb-root">All sectors</span>
+        <span id="hmCrumbSep" style="display:none">›</span>
+        <span id="hmCrumbSector" style="display:none"></span>
+      </div>
+      <div class="hm-meta">
+        <span id="hmUpdated" class="hm-updated">—</span>
+        <button class="hm-refresh" id="hmRefreshBtn" title="Force refresh (bypasses 1-min cache)">↻ Refresh</button>
+      </div>
+    </div>
+    <div class="hm-grid" id="heatmapGrid">
+      <div class="hm-loading">Loading sector movements…</div>
+    </div>
+    <div class="hm-legend">
+      <span class="hm-legend-sw" style="background:#c0392b"></span> −3% or worse
+      <span class="hm-legend-sw" style="background:#e67e22"></span> −1%
+      <span class="hm-legend-sw" style="background:#5a5a5a"></span> flat
+      <span class="hm-legend-sw" style="background:#27ae60"></span> +1%
+      <span class="hm-legend-sw" style="background:#16a085"></span> +3% or better
+      <span style="display:inline-block;width:14px;height:10px;border:2px solid #000;
+                   box-shadow:0 0 6px rgba(0,0,0,0.9);border-radius:2px;
+                   vertical-align:middle;margin:0 3px 0 14px"></span> Open=High
+      <span style="display:inline-block;width:14px;height:10px;border:2px solid #1e6bff;
+                   box-shadow:0 0 6px rgba(30,107,255,0.85);border-radius:2px;
+                   vertical-align:middle;margin:0 3px 0 10px"></span> Open=Low
+      <span style="margin-left:auto;opacity:0.6">Auto-refreshes every 1 min</span>
+    </div>
+  </section>
 </main>
 
 <!-- Row-drill drawer -->
@@ -494,6 +656,81 @@
   .price-drawer.fullscreen { position:fixed; inset:0; width:100vw !important; max-width:none;
                              height:100vh; border-radius:0; overflow-y:auto }
   .price-drawer.fullscreen .chart-box { height: calc(100vh - 280px) !important; min-height:420px }
+
+  /* ============================== Heatmap tab ============================== */
+  /* Grid of uniform tiles; colour driven inline from JS via background-color.
+     Each tile shows sector/symbol name (top), big % change (middle), and last
+     price (bottom). Click drills sector→stocks; stocks open the price drawer. */
+  .hm-header { display:flex; align-items:center; gap:12px; margin:8px 0 14px;
+               flex-wrap:wrap }
+  .hm-crumb { font-size:14px; color:var(--dim); display:flex; align-items:center; gap:6px }
+  .hm-crumb-root { cursor:pointer; color:var(--text); text-decoration:underline;
+                   text-decoration-color:transparent; transition:text-decoration-color .15s }
+  .hm-crumb-root:hover { text-decoration-color:var(--dim) }
+  .hm-crumb.at-root .hm-crumb-root { cursor:default; text-decoration:none; color:var(--dim) }
+  .hm-meta { margin-left:auto; display:flex; align-items:center; gap:10px;
+             font-size:12px; color:var(--dim) }
+  .hm-updated { font-variant-numeric:tabular-nums }
+  .hm-refresh { background:var(--card); color:var(--text); border:1px solid var(--border);
+                border-radius:4px; padding:5px 10px; font-size:12px; cursor:pointer }
+  .hm-refresh:hover { background:var(--card-2) }
+  .hm-refresh:disabled { opacity:0.4; cursor:not-allowed }
+  /* Treemap layout: tiles are absolutely-positioned inside a fixed-height
+     container. Squarified-treemap algorithm computes exact rectangles
+     proportional to |pct|, in strict descending order, so the tile sizes
+     always match the ranking and the whole container is filled edge-to-edge
+     with no gaps and no page scroll. */
+  .hm-grid { position:relative; width:100%;
+             /* Fill remaining viewport height minus header + tabs + hm-header
+                + legend + margins. Computed on the JS side too via
+                ResizeObserver so it also re-lays on window resize. */
+             height: calc(100vh - 260px); min-height: 420px;
+             background: transparent; overflow: hidden }
+  .hm-tile { position:absolute; box-sizing:border-box;
+             border-radius:6px; padding:10px 12px; color:#fff;
+             cursor:pointer; user-select:none;
+             display:flex; flex-direction:column; justify-content:space-between;
+             /* Solid dark separator so adjacent same-coloured tiles remain
+                visually distinguishable — a translucent white border blends
+                into the tile fill when tiles are packed edge-to-edge. */
+             border:1px solid rgba(0,0,0,0.55);
+             outline:1px solid rgba(255,255,255,0.08); outline-offset:-1px;
+             transition:filter .1s ease, border-color .1s ease;
+             overflow:hidden }
+  .hm-tile:hover { filter:brightness(1.12); border-color:#fff; z-index:2 }
+  .hm-tile.na { cursor:default; background:#3a3a3a !important; color:#aaa }
+  .hm-tile.na:hover { filter:none }
+  /* Open == High: opened at intraday peak, sold off from the bell →
+     bearish signal. Deep black glow — reads as "heavy / oppressive" against
+     the tile background without adding red-on-red visual fatigue. */
+  .hm-tile.oh { border:2px solid #000;
+                box-shadow:0 0 14px 3px rgba(0,0,0,0.85),
+                           inset 0 0 8px rgba(0,0,0,0.55) }
+  .hm-tile.oh:hover { border-color:#222 }
+  /* Open == Low: opened at intraday floor, bought all day → bullish
+     signal. Electric jet-blue glow — visually distinct from the green
+     tile-fill so a green-with-OL tile doesn't blur into a single blob. */
+  .hm-tile.ol { border:2px solid #1e6bff;
+                box-shadow:0 0 14px 3px rgba(30,107,255,0.80),
+                           inset 0 0 8px rgba(30,107,255,0.40) }
+  .hm-tile.ol:hover { border-color:#4d8bff }
+  .hm-tile-name { font-weight:600; letter-spacing:0.2px;
+                  text-shadow:0 1px 2px rgba(0,0,0,0.35); word-break:break-word;
+                  line-height:1.1 }
+  .hm-tile-pct  { font-weight:700; font-variant-numeric:tabular-nums;
+                  text-shadow:0 1px 2px rgba(0,0,0,0.35); line-height:1 }
+  .hm-tile-px   { opacity:0.85; font-variant-numeric:tabular-nums; line-height:1 }
+  /* Font sizes are set inline by the JS from each tile's own dimensions
+     (proportional to min(w,h)), so we only need sensible fallbacks here. */
+  .hm-loading, .hm-empty { position:absolute; inset:0; display:flex;
+                           align-items:center; justify-content:center;
+                           color:var(--dim); font-size:13px; text-align:center; padding:20px }
+  .hm-loading, .hm-empty { grid-column:1/-1; text-align:center; color:var(--dim);
+                           padding:30px; font-size:13px }
+  .hm-legend { display:flex; align-items:center; gap:8px; margin-top:14px;
+               font-size:11.5px; color:var(--dim); flex-wrap:wrap }
+  .hm-legend-sw { display:inline-block; width:14px; height:14px; border-radius:3px;
+                  vertical-align:middle; margin:0 3px 0 8px }
 </style>
 
 <div id="toast"></div>
@@ -522,9 +759,23 @@ let equityChart = null;
 let mcapChart   = null;
 
 // ============================== helpers ==============================
+// The rupee glyph is painted in a muted colour so that when the whole
+// value gets a red/green .pos/.neg class it doesn't look like a range
+// ("₹ → −801"). The digits still carry the sign colour; only the symbol
+// is neutralised. Callers that used `.textContent = fmtRupee(...)` were
+// updated to `.innerHTML` because the return value is now HTML.
+//
+// Chart.js tick / tooltip callbacks paint their strings to a 2-D canvas,
+// which cannot render HTML — for those contexts use `fmtRupeeTxt` /
+// `fmtRupeeTxt2` instead (plain "₹123" with no span wrapper).
+const _cur = '<span class="curr">₹</span>';
 const fmtRupee = n => (n == null || isNaN(n)) ? '—'
-  : '₹' + (n >= 0 ? '' : '−') + Math.abs(n).toLocaleString('en-IN', {maximumFractionDigits:0});
+  : _cur + (n >= 0 ? '' : '−') + Math.abs(n).toLocaleString('en-IN', {maximumFractionDigits:0});
 const fmtRupee2 = n => (n == null || isNaN(n)) ? '—'
+  : _cur + (n >= 0 ? '' : '−') + Math.abs(n).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+const fmtRupeeTxt = n => (n == null || isNaN(n)) ? '—'
+  : '₹' + (n >= 0 ? '' : '−') + Math.abs(n).toLocaleString('en-IN', {maximumFractionDigits:0});
+const fmtRupeeTxt2 = n => (n == null || isNaN(n)) ? '—'
   : '₹' + (n >= 0 ? '' : '−') + Math.abs(n).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
 const fmtPct = n => (n == null || isNaN(n)) ? '—' : (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
 const signCls = n => n > 0 ? 'pos' : (n < 0 ? 'neg' : '');
@@ -639,53 +890,156 @@ async function refreshAll() {
   await loadStatus();
   await loadAllRanges();
   await loadActiveRangeData();
-  document.getElementById('metaStrip').innerHTML = renderMetaStrip();
 }
 
 // ============================== render: header/status ==============================
 function renderHeader() {
   const s = state.status || {};
-  const armed = document.getElementById('armedBadge');
-  const mode  = document.getElementById('modeBadge');
-  const enable = document.getElementById('enableBtn');
+  const badge   = document.getElementById('statusBadge');
+  const enable  = document.getElementById('enableBtn');
   const disable = document.getElementById('disableBtn');
 
-  if (s.ready) { armed.className = 'badge armed'; armed.textContent = '🟢 ARMED'; }
-  else if (!s.kiteAuthenticated) { armed.className = 'badge notready'; armed.textContent = '⛔ NOT AUTHED'; }
-  else if (s.ordersDisabled) { armed.className = 'badge warn'; armed.textContent = '🟡 ORDERS OFF'; }
-  else { armed.className = 'badge notready'; armed.textContent = '⛔ NOT READY'; }
-
-  if (s.ordersDisabled) {
-    mode.className = 'badge dry'; mode.textContent = '🟠 DRY MODE';
+  // Single traffic-light status: merges the previous "armed / not-ready" +
+  // "live money / dry mode" badges into one canonical state chip. There's
+  // only ever one truth to communicate ("is my next Chartink signal going
+  // to place a real order?") so we render it as one signal, not two.
+  if (!s.kiteAuthenticated) {
+    badge.className = 'badge notready';
+    badge.textContent = '⛔ NOT AUTHED';
+    enable.style.display = 'none'; disable.style.display = 'none';
+  } else if (s.ordersDisabled) {
+    badge.className = 'badge dry';
+    badge.textContent = '🟠 DRY MODE';
     enable.style.display = 'inline-block'; disable.style.display = 'none';
-  } else {
-    mode.className = 'badge live'; mode.textContent = '🔴 REAL MONEY';
+  } else if (s.ready) {
+    badge.className = 'badge live';
+    badge.textContent = '🟢 ARMED · LIVE';
     enable.style.display = 'none'; disable.style.display = 'inline-block';
+  } else {
+    badge.className = 'badge notready';
+    badge.textContent = '⛔ NOT READY';
+    enable.style.display = 'none'; disable.style.display = 'none';
   }
-  document.getElementById('userMeta').textContent = 'P&L dashboard';
 }
 
-function renderMetaStrip() {
-  const s = state.status || {};
-  const now = new Date().toLocaleTimeString('en-IN', {timeZone:'Asia/Kolkata', hour12:false});
-  return `<span>auth: <strong>${s.kiteAuthenticated ? '✓' : '✗'}</strong></span>` +
-         `<span>orders: <strong>${s.ordersDisabled ? 'DISABLED' : 'ENABLED'}</strong></span>` +
-         `<span>updated: <strong>${now} IST</strong></span>`;
+/**
+ * Market-clock pill in the header.
+ * - Left half : today's NIFTY 50 % change (green/red).
+ * - Right half: countdown to next market-hours boundary (opens/closes in Xh Ym).
+ * Fetches NIFTY quotes on-demand (~1x per open/close boundary is plenty) and
+ * refreshes the countdown every 30 s. Trading hours = Mon-Fri 09:15-15:30 IST.
+ */
+async function renderMarketPill() {
+  const pill  = document.getElementById('marketPill');
+  const clock = document.getElementById('mp-clock');
+  const idx   = document.getElementById('mp-nifty');
+
+  // ---- Market-hours countdown (pure client-side, IST) ----
+  // toLocaleString → parseable date in IST so we don't have to hand-roll
+  // timezone math. Cheap; runs every 30 s from a setInterval below.
+  const nowIst = new Date(new Date().toLocaleString('en-US', {timeZone:'Asia/Kolkata'}));
+  const dow = nowIst.getDay(); // 0=Sun … 6=Sat
+  const isWeekend = (dow === 0 || dow === 6);
+  const openMin  = 9*60 + 15;      // 09:15
+  const closeMin = 15*60 + 30;     // 15:30
+  const cur = nowIst.getHours()*60 + nowIst.getMinutes();
+  const fmtDur = m => {
+    if (m < 60) return m + 'm';
+    return Math.floor(m/60) + 'h ' + (m%60) + 'm';
+  };
+  if (isWeekend) {
+    pill.classList.add('closed');
+    clock.textContent = 'weekend';
+  } else if (cur < openMin) {
+    pill.classList.add('closed');
+    clock.textContent = 'opens in ' + fmtDur(openMin - cur);
+  } else if (cur >= closeMin) {
+    pill.classList.add('closed');
+    clock.textContent = 'closed';
+  } else {
+    pill.classList.remove('closed');
+    clock.textContent = 'closes in ' + fmtDur(closeMin - cur);
+  }
+
+  // ---- NIFTY 50 % change ----
+  // Fetch once at boot, then every 5 minutes while market is open. Uses the
+  // existing benchmark-history endpoint — 3 daily candles anchored today,
+  // last close vs previous close.
+  const nowMs = Date.now();
+  if (!renderMarketPill._niftyAt || nowMs - renderMarketPill._niftyAt > 5*60*1000) {
+    renderMarketPill._niftyAt = nowMs;
+    try {
+      const today = new Date().toISOString().substring(0, 10);
+      const data = await j('/api/pnl/benchmark-history?bench=' + encodeURIComponent('NIFTY 50')
+                           + '&fromDate=' + today + '&days=1&before=2');
+      if (Array.isArray(data) && data.length >= 2) {
+        const last = data[data.length - 1].close;
+        const prev = data[data.length - 2].close;
+        if (prev > 0) {
+          const pct = (last - prev) / prev * 100;
+          const sign = pct >= 0 ? '+' : '';
+          const cls  = pct >= 0 ? 'pos' : 'neg';
+          idx.innerHTML = `<span class="${cls}">${sign}${pct.toFixed(2)}%</span>`;
+        }
+      }
+    } catch (e) { /* leave prior value in place on failure */ }
+  }
+}
+
+/**
+ * Tab switching for Home / Trades / Heatmap.
+ * - Hash-driven so browser back/forward + bookmarks are honoured.
+ * - Falls back to Home on unknown / missing hash.
+ */
+function initTabs() {
+  const validTabs = ['home', 'trades', 'heatmap'];
+  const apply = (name) => {
+    if (!validTabs.includes(name)) name = 'home';
+    document.querySelectorAll('#tabs .tab').forEach(el => {
+      el.classList.toggle('active', el.dataset.tab === name);
+    });
+    validTabs.forEach(t => {
+      const page = document.getElementById('page-' + t);
+      if (page) page.hidden = (t !== name);
+    });
+    // Chart.js instances built while their container was hidden mis-size
+    // themselves — kick a resize once we reveal Home again.
+    if (name === 'home') {
+      requestAnimationFrame(() => {
+        if (equityChart) equityChart.resize();
+        if (mcapChart)   mcapChart.resize();
+      });
+    }
+    // Heatmap tab has its own polling loop that only runs while the tab is
+    // visible — start/stop it here so we don't waste Kite quota on hidden tabs.
+    if (name === 'heatmap') startHeatmap();
+    else                    stopHeatmap();
+  };
+  document.querySelectorAll('#tabs .tab').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.preventDefault();
+      const name = el.dataset.tab;
+      history.replaceState(null, '', '#' + name);
+      apply(name);
+    });
+  });
+  window.addEventListener('hashchange', () => apply(location.hash.replace('#','')));
+  apply(location.hash.replace('#','') || 'home');
 }
 
 // ============================== render: KPIs ==============================
 function renderKpis() {
   const k = state.kpis; if (!k) return;
-  document.getElementById('kpi-deployed').textContent = fmtRupee(k.capitalDeployed);
+  document.getElementById('kpi-deployed').innerHTML = fmtRupee(k.capitalDeployed);
   document.getElementById('kpi-deployed-sub').textContent = `${k.openPositionsCount} open · ${k.uniqueSymbolsCount} symbols traded`;
 
   const up = document.getElementById('kpi-unrealized');
-  up.textContent = fmtRupee(k.unrealizedPnl); up.className = 'value ' + signCls(k.unrealizedPnl);
+  up.innerHTML = fmtRupee(k.unrealizedPnl); up.className = 'value ' + signCls(k.unrealizedPnl);
   document.getElementById('kpi-unrealized-sub').innerHTML =
     `<span class="${signCls(k.unrealizedRoiPct)}">${fmtPct(k.unrealizedRoiPct)}</span> · marked-to-market`;
 
   const rp = document.getElementById('kpi-realized');
-  rp.textContent = fmtRupee(k.realizedPnl); rp.className = 'value ' + signCls(k.realizedPnl);
+  rp.innerHTML = fmtRupee(k.realizedPnl); rp.className = 'value ' + signCls(k.realizedPnl);
   document.getElementById('kpi-realized-sub').textContent =
     `${k.winning}W / ${k.losing}L · win rate ${(k.winRatePct||0).toFixed(0)}% · ${k.tradesCount} trades`;
 
@@ -752,11 +1106,11 @@ function renderEquity() {
       responsive: true, maintainAspectRatio: false,
       plugins: {
         legend: { display: false },
-        tooltip: { callbacks: { label: c => 'Cumulative: ' + fmtRupee2(c.parsed.y) } }
+        tooltip: { callbacks: { label: c => 'Cumulative: ' + fmtRupeeTxt2(c.parsed.y) } }
       },
       scales: {
         x: { ticks: { color:'#8892a6', maxRotation:0, autoSkip:true, maxTicksLimit:7 }, grid: { color:'rgba(255,255,255,0.03)' } },
-        y: { ticks: { color:'#8892a6', callback: v => fmtRupee(v) }, grid: { color:'rgba(255,255,255,0.05)' } }
+        y: { ticks: { color:'#8892a6', callback: v => fmtRupeeTxt(v) }, grid: { color:'rgba(255,255,255,0.05)' } }
       }
     }
   });
@@ -786,7 +1140,7 @@ function renderSectors() {
       ? `<div class="half left"></div><div class="half right"><div class="fill pos" style="width:${w}%"></div></div>`
       : `<div class="half left"><div class="fill neg" style="width:${w}%"></div></div><div class="half right"></div>`;
     return `<div class="div-row${active}" onclick="filterBySector('${s.sector.replace(/'/g,"\\'")}')" title="${s.sector}">
-      <div class="div-label">${s.sector}<div class="div-meta">${s.trades}t · ${s.wins}W/${s.losses}L</div></div>
+      <div class="div-label">${titleCaseSector(s.sector)}<div class="div-meta">${s.trades}t · ${s.wins}W/${s.losses}L</div></div>
       <div class="div-track">${bar}</div>
       <div class="sector-pnl ${signCls(s.realizedPnl)}">${fmtRupee(s.realizedPnl)}</div>
     </div>`;
@@ -880,7 +1234,7 @@ function renderMarketCaps() {
   // Center label: net realized P&L, colour-coded, with total trade count.
   centerEl.style.display = 'flex';
   const val = document.getElementById('mcapCenterValue');
-  val.textContent = fmtRupee(netTotal);
+  val.innerHTML = fmtRupee(netTotal);
   val.className = 'value ' + signCls(netTotal);
   document.getElementById('mcapCenterSub').textContent = `${tradesTotal} trades`;
 
@@ -940,7 +1294,7 @@ function renderOpen() {
   body.innerHTML = rows.map((p, idx) => {
     const held = p.openedAt ? Math.round((Date.now() - new Date(p.openedAt).getTime())/3600000) : null;
     const sectorCell = p.sector
-      ? `<span class="sector-pill">${p.sector}</span>`
+      ? `<span class="sector-pill">${titleCaseSector(p.sector)}</span>`
       : `<span style="color:var(--muted)">—</span>`;
     const mcapCell = renderMcapPill(p.marketCap);
     const slCell  = p.stopLossPrice != null ? p.stopLossPrice.toFixed(2) : '—';
@@ -1006,6 +1360,7 @@ function closeDrawer() {
 // trailing-SL simulation, volume bars, and pre-entry context greyed out.
 let priceChart = null;
 const priceState = {
+  mode: 'journey',       // 'journey' (traded stock) | 'intraday' (heatmap tile)
   symbol: null, entryAt: null, entryPx: 0, sl: 0, tgt: 0, sector: null,
   exitAt: null, exitPx: null,
   candles: [],           // stock candles (with preEntry flag)
@@ -1015,6 +1370,7 @@ const priceState = {
 };
 
 async function openPriceDrawer(symbol, entryAt, entryPx, sl, tgt, exitAt, exitPx, sector) {
+  priceState.mode = 'journey';
   priceState.symbol = symbol;
   priceState.entryAt = entryAt;
   priceState.entryPx = Number(entryPx) || 0;
@@ -1027,6 +1383,10 @@ async function openPriceDrawer(symbol, entryAt, entryPx, sl, tgt, exitAt, exitPx
   priceState.benchCandles = [];
   priceState.benchName = null;
   priceState.summary = null;
+
+  // Restore toolbar / hindsight visibility in case an intraday open hid them.
+  document.getElementById('priceToolbar').style.display = '';
+  document.getElementById('priceHindsight').style.display = 'none';
 
   document.getElementById('priceDrawer').classList.add('open');
   document.getElementById('priceOverlay').classList.add('open');
@@ -1045,7 +1405,7 @@ async function openPriceDrawer(symbol, entryAt, entryPx, sl, tgt, exitAt, exitPx
      <div style="color:var(--dim);font-size:13px">
        Entry <strong>${fromDate}</strong> @ <strong>₹${priceState.entryPx.toFixed(2)}</strong>
        · ${slLine} · ${tgtLine}${exitLine}
-       ${sector ? ' · sector <span class="sector-pill">'+sector+'</span>' : ''}
+       ${sector ? ' · sector <span class="sector-pill">'+titleCaseSector(sector)+'</span>' : ''}
      </div>`;
   document.getElementById('priceFooter').textContent = 'Loading candles from Kite…';
   document.getElementById('priceHindsight').style.display = 'none';
@@ -1078,11 +1438,83 @@ async function openPriceDrawer(symbol, entryAt, entryPx, sl, tgt, exitAt, exitPx
   }
 }
 
+/**
+ * Open the price-journey drawer in **intraday** mode from a heatmap stock
+ * tile. Reuses the drawer chrome (right-side slide-in, header/footer,
+ * close/fullscreen buttons) — only the chart body differs: 5-minute
+ * candlesticks over previous trading day + today instead of daily H/L/close
+ * line series with SL/TGT/ladder overlays.
+ */
+async function openIntradayDrawer(tile) {
+  const symbol = tile.name;
+  priceState.mode = 'intraday';
+  priceState.symbol = symbol;
+  priceState.entryAt = null;
+  priceState.entryPx = 0;
+  priceState.sl = 0; priceState.tgt = 0;
+  priceState.sector = null;
+  priceState.exitAt = null; priceState.exitPx = null;
+  priceState.candles = [];
+  priceState.benchCandles = [];
+  priceState.benchName = null;
+  priceState.summary = null;
+
+  document.getElementById('priceDrawer').classList.add('open');
+  document.getElementById('priceOverlay').classList.add('open');
+
+  // Intraday view has no entry pivot, no benchmark comparison, no SL/TGT →
+  // the whole toolbar + hindsight strip are irrelevant.
+  document.getElementById('priceToolbar').style.display = 'none';
+  document.getElementById('priceHindsight').style.display = 'none';
+
+  // Header — today's snapshot pulled straight from the clicked tile so it
+  // paints instantly, before intraday candles arrive.
+  const pct   = tile.pct;
+  const pctCls = (pct == null || isNaN(pct)) ? '' : (pct >= 0 ? 'pos' : 'neg');
+  const pctTxt = (pct == null || isNaN(pct)) ? '—' : (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%';
+  const price = tile.price;
+  const priceTxt = (price == null || isNaN(price)) ? '—'
+                   : '₹' + price.toLocaleString('en-IN', {maximumFractionDigits:2});
+  const ohlcBits = [];
+  if (tile.open != null) ohlcBits.push(`O ₹${tile.open.toFixed(2)}`);
+  if (tile.high != null) ohlcBits.push(`H ₹${tile.high.toFixed(2)}`);
+  if (tile.low  != null) ohlcBits.push(`L ₹${tile.low.toFixed(2)}`);
+  const ohlcLine = ohlcBits.length ? ' · ' + ohlcBits.join(' · ') : '';
+  document.getElementById('priceHeader').innerHTML =
+    `<h3 style="margin-top:0">${symbol} · intraday</h3>
+     <div style="color:var(--dim);font-size:13px">
+       LTP <strong>${priceTxt}</strong>
+       · <span class="${pctCls}">${pctTxt}</span>${ohlcLine}
+       · <span style="opacity:0.7">5-min candles · previous day + today</span>
+     </div>`;
+  document.getElementById('priceFooter').textContent = 'Loading intraday candles from Kite…';
+  document.getElementById('priceEmpty').style.display = 'none';
+
+  try {
+    const data = await j('/api/heatmap/intraday?symbol=' + encodeURIComponent(symbol));
+    priceState.candles = Array.isArray(data.candles) ? data.candles : [];
+    renderPriceChart();
+    const n = priceState.candles.length;
+    document.getElementById('priceFooter').textContent =
+      n ? `${n} five-minute bars` : '';
+  } catch (e) {
+    priceState.candles = [];
+    renderPriceChart();
+    document.getElementById('priceFooter').textContent = 'Failed: ' + e.message;
+    toast('intraday: ' + e.message, 'err');
+  }
+}
+
 function closePriceDrawer() {
   document.getElementById('priceDrawer').classList.remove('open');
   document.getElementById('priceOverlay').classList.remove('open');
   document.getElementById('priceDrawer').classList.remove('fullscreen');
   if (priceChart) { priceChart.destroy(); priceChart = null; }
+  // Reset to default mode so re-opening (e.g. from Trades tab) shows the
+  // full journey UI even after an intraday-open hid the toolbar.
+  priceState.mode = 'journey';
+  document.getElementById('priceToolbar').style.display = '';
+  document.getElementById('priceHindsight').style.display = 'none';
 }
 
 // Fullscreen toggle for the price-journey drawer. Chart.js needs a resize
@@ -1095,8 +1527,16 @@ function togglePriceFullscreen() {
   const isFs = d.classList.contains('fullscreen');
   btn.textContent = isFs ? '🗗' : '⛶';
   btn.title = isFs ? 'Collapse' : 'Toggle fullscreen';
-  // Give the browser a frame to re-layout, then tell Chart.js to resize.
-  requestAnimationFrame(() => { if (priceChart) priceChart.resize(); });
+  // Give the browser a frame to re-layout, then tell Chart.js to resize
+  // (journey mode) or redraw the raw-canvas candlesticks (intraday mode).
+  requestAnimationFrame(() => {
+    if (priceState.mode === 'intraday') {
+      const c = document.getElementById('priceChart');
+      if (c) drawIntradayCandlesticks(c);
+    } else if (priceChart) {
+      priceChart.resize();
+    }
+  });
 }
 
 async function reloadBenchmark() {
@@ -1167,6 +1607,13 @@ function renderPriceChartImpl() {
   }
   canvas.style.display = 'block';
   emptyEl.style.display = 'none';
+
+  // Heatmap intraday mode uses raw canvas draw (5-min candlesticks), not
+  // Chart.js — the toolbar/overlays don't apply here.
+  if (priceState.mode === 'intraday') {
+    drawIntradayCandlesticks(canvas);
+    return;
+  }
 
   const showPreEntry = document.getElementById('ptPreEntry').checked;
   const showLadder   = document.getElementById('ptLadder').checked;
@@ -1270,25 +1717,13 @@ function renderPriceChartImpl() {
   if (priceState.sl > 0)      datasets.push(flat(priceState.sl,      '#ff5c7c', [6,3], 'SL'));
   if (priceState.tgt > 0)     datasets.push(flat(priceState.tgt,     '#3ddc84', [6,3], 'TGT'));
 
-  // Ladder guides — faint dashed lines at ±1/3/5/7/10% from entry (feature #2)
-  if (showLadder && priceState.entryPx > 0) {
-    const ladder = [-3, -1, 1, 3, 5, 7, 10];
-    for (const pct of ladder) {
-      const v = priceState.entryPx * (1 + pct/100);
-      // Very low opacity — ladder is a *guide* not a focal element. If it's
-      // as loud as the Entry/SL/TGT dashed lines the chart becomes noise.
-      const color = pct < 0 ? 'rgba(255,92,124,0.15)' : 'rgba(61,220,132,0.15)';
-      datasets.push({
-        type: 'line',
-        label: (pct>0?'+':'') + pct + '%',
-        data: postEntryOnly(v),
-        borderColor: color, borderWidth: 1, borderDash: [1,5],
-        pointRadius: 0, fill: false, tension: 0, yAxisID: 'y',
-        spanGaps: false,
-        _isRef: true
-      });
-    }
-  }
+  // Ladder guides — drawn as raw canvas strokes by the `ladderLabels`
+  // plugin below (see priceChart config). We deliberately do NOT push
+  // Chart.js line datasets for the ladder: flat repeat-value line series
+  // were failing to render on some builds (likely a smoothing / axis-
+  // extent quirk), so instead we compute the y-pixel from the price scale
+  // and stroke a horizontal line + coloured "±X%" chip directly.
+  // `showLadder` is captured in a closure by the plugin's options below.
 
   // Trailing-SL simulation (feature #5). Start SL at priceState.sl (or entry−2%),
   // and each day ratchet it up to max(prev, close × (1 - trailPct)). Never
@@ -1310,7 +1745,9 @@ function renderPriceChartImpl() {
       type: 'line',
       label: 'Trailing SL (3%)',
       data: trail,
-      borderColor: '#f5c451', borderWidth: 1.5, borderDash: [3,3],
+      // Distinct orange so it doesn't merge with the yellow Exit marker
+      // or sit invisibly on top of the flat red SL line.
+      borderColor: '#ff9f43', borderWidth: 2, borderDash: [6,3],
       pointRadius: 0, fill: false, tension: 0, yAxisID: 'y',
       _isRef: true
     });
@@ -1345,17 +1782,20 @@ function renderPriceChartImpl() {
     }
   }
 
-  // Volume bars on a hidden right axis, low opacity so they're context not focus.
+  // Volume bars on a hidden right axis. Opacity bumped and `order:-2` puts
+  // the bars *in front of* the H/L ribbon fill so toggling the checkbox is
+  // actually visible — the previous `order:99` drew them behind the
+  // translucent ribbon and they were washed out to invisibility.
   if (showVolume) {
     datasets.push({
       type: 'bar',
       label: 'Volume',
       data: vols,
       backgroundColor: preEntryFlags.map((p,i) =>
-        p ? 'rgba(136,146,172,0.25)' : (candles[i].close >= candles[i].open ? 'rgba(61,220,132,0.35)' : 'rgba(255,92,124,0.35)')),
+        p ? 'rgba(136,146,172,0.45)' : (candles[i].close >= candles[i].open ? 'rgba(61,220,132,0.65)' : 'rgba(255,92,124,0.65)')),
       borderWidth: 0,
       yAxisID: 'volume',
-      order: 99  // draw beneath lines
+      order: -2
     });
   }
 
@@ -1404,14 +1844,72 @@ function renderPriceChartImpl() {
   }
 
   const ctx = canvas.getContext('2d');
+  // Ladder plugin: strokes a full-width horizontal line at each ±X% level
+  // from priceState.entryPx and paints a coloured "±X%" chip in the right
+  // margin. Draws directly to the 2D context after Chart.js finishes its
+  // own dataset render, so it can't be defeated by dataset quirks. Uses
+  // closure-captured `showLadder` + `priceState.entryPx` — safe because
+  // renderPriceChartImpl rebuilds the chart on every toggle.
+  const _showLadder = showLadder;
+  const _entryPx    = priceState.entryPx;
+  const ladderLabels = {
+    id: 'ladderLabels',
+    afterDatasetsDraw(chart) {
+      if (!_showLadder || !(_entryPx > 0)) return;
+      const {ctx: cx, chartArea, scales} = chart;
+      const ladder = [-3, -1, 1, 3, 5, 7, 10];
+      const alpha  = {1:1.0, 3:0.9, 5:0.8, 7:0.7, 10:0.6};
+      cx.save();
+      cx.font = '600 10px system-ui, sans-serif';
+      cx.textAlign = 'center';
+      cx.textBaseline = 'middle';
+      for (const pct of ladder) {
+        const v = _entryPx * (1 + pct/100);
+        const y = scales.y.getPixelForValue(v);
+        // Skip rungs that fall outside the visible plot area.
+        if (y < chartArea.top || y > chartArea.bottom) continue;
+        const a = alpha[Math.abs(pct)] || 0.7;
+        // Direction still encoded by hue, but away from the red/green
+        // used everywhere else on the chart (Daily Low/High, SL, TGT,
+        // close-day dots). Cool cyan for "above entry", warm amber for
+        // "below entry" — visually distinct from every other series and
+        // still readable at a glance.
+        const color = pct < 0 ? `rgba(240,166,73,${a})`   // amber (below entry)
+                              : `rgba(103,232,249,${a})`; // cyan  (above entry)
+        // Line across the full plot width
+        cx.strokeStyle = color;
+        cx.lineWidth = 1.25;
+        cx.setLineDash([]);
+        cx.beginPath();
+        cx.moveTo(chartArea.left,  y + 0.5);
+        cx.lineTo(chartArea.right, y + 0.5);
+        cx.stroke();
+        // Chip in the right margin
+        const text = (pct > 0 ? '+' : '') + pct + '%';
+        const w = cx.measureText(text).width + 8;
+        const h = 14;
+        const x = chartArea.right + 4;
+        cx.fillStyle = color;
+        cx.fillRect(x, y - h/2, w, h);
+        cx.fillStyle = '#0f1420';
+        cx.fillText(text, x + w/2, y + 0.5);
+      }
+      cx.restore();
+    }
+  };
   priceChart = new Chart(ctx, {
     // Default type = line; the Volume dataset overrides to 'bar' inline.
     // Without this top-level type Chart.js can't resolve controllers for
     // untyped datasets and throws "undefined is not a registered controller".
     type: 'line',
     data: { labels, datasets },
+    plugins: [ladderLabels],
     options: {
       responsive: true, maintainAspectRatio: false,
+      // Reserve room on the right for the ladderLabels plugin's "±X%"
+      // tags (drawn just outside chartArea.right). Without this padding
+      // "+10%" gets clipped by the canvas edge.
+      layout: { padding: { right: showLadder ? 50 : 0 } },
       // Tooltip pops for the *single nearest* point under the cursor, not the
       // whole vertical index — otherwise every non-ref series at that day
       // shows up and drowns out which line the user is actually pointing at.
@@ -1478,7 +1976,7 @@ function renderClosed() {
     <td>${fmtTime(t.entryAt)}</td>
     <td>${fmtTime(t.exitAt)}</td>
     <td class="row-symbol" onclick='openPriceDrawer(${JSON.stringify(t.symbol)}, ${JSON.stringify(t.entryAt)}, ${t.entryPx}, ${t.stopLossPrice||0}, ${t.targetPrice||0}, ${JSON.stringify(t.exitAt)}, ${t.exitPx}, ${JSON.stringify(t.sector||"")})' style="cursor:pointer;text-decoration:underline;text-decoration-color:var(--muted);text-underline-offset:3px">${t.symbol}</td>
-    <td>${t.sector ? '<span class="sector-pill">'+t.sector+'</span>' : '<span style="color:var(--muted)">—</span>'}</td>
+    <td>${t.sector ? '<span class="sector-pill">'+titleCaseSector(t.sector)+'</span>' : '<span style="color:var(--muted)">—</span>'}</td>
     <td>${renderMcapPill(t.marketCap)}</td>
     <td>${renderExitBadge(t.exitType)}</td>
     <td class="right">${t.quantity}</td>
@@ -1506,23 +2004,99 @@ function renderClosed() {
   renderChips();
 }
 
-function renderChips() {
-  const sectors = state.sectorPerf.map(s => s.sector);
-  const chips = document.getElementById('sectorChips');
-  chips.innerHTML =
-    `<span class="chip ${!state.sectorFilter ? 'active' : ''}" onclick="clearSectorFilter()">All sectors</span>` +
-    sectors.map(s => `<span class="chip ${state.sectorFilter===s?'active':''}" onclick="filterBySector('${s.replace(/'/g,"\\'")}')">${s}</span>`).join('');
-
-  // Market-cap chip row — mirrors the sector chips and stacks below them so
-  // you can slice closed trades by both dimensions independently.
-  const caps = (state.marketCapPerf || []).map(m => m.marketCap);
-  const mchips = document.getElementById('mcapChips');
-  if (mchips) {
-    mchips.innerHTML =
-      `<span class="chip ${!state.marketCapFilter ? 'active' : ''}" onclick="clearMarketCapFilter()">All caps</span>` +
-      caps.map(m => `<span class="chip ${state.marketCapFilter===m?'active':''}" onclick="filterByMarketCap('${m}')">${renderMcapPill(m)}</span>`).join('');
-  }
+/**
+ * Normalise a free-form sector string ("metals & mining", "OIL GAS &
+ * CONSUMABLE FUELS") into Title Case for display. The backend classifier
+ * maps some values through untouched, producing inconsistent casing in the
+ * dashboard; this cleans it up display-side without disturbing the
+ * canonical string used as filter key.
+ * - Splits on whitespace, capitalises each word.
+ * - Leaves conjunctions ("and", "&", "or") lowercase, except when first.
+ * - Leaves short all-caps acronyms alone if they look like tickers (>=3
+ *   consecutive uppercase letters in the input).
+ */
+function titleCaseSector(s) {
+  if (!s) return s;
+  const smalls = new Set(['and', 'or', 'of', 'the', '&']);
+  return s.split(/(\s+)/).map((tok, i) => {
+    if (/^\s+$/.test(tok)) return tok;
+    const lower = tok.toLowerCase();
+    if (i > 0 && smalls.has(lower)) return lower;
+    return lower.charAt(0).toUpperCase() + lower.slice(1);
+  }).join('');
 }
+
+/**
+ * Compact filter row for the Closed Trades table (formerly two rows of
+ * chips). Populates the sector dropdown from sectorPerf (with trade counts
+ * inline) and the cap segmented control from marketCapPerf. Zero-count cap
+ * buckets render as disabled so we don't get "ghost" pills like the old
+ * unclassified-small-cap that had nothing behind it.
+ */
+function renderChips() {
+  // ---- Sector dropdown ----
+  const sel = document.getElementById('sectorFilterSel');
+  if (sel) {
+    const sectors = state.sectorPerf || [];
+    const cur = state.sectorFilter || '';
+    const totalTrades = sectors.reduce((a, s) => a + (s.trades || s.tradesCount || 0), 0);
+    let html = `<option value="">All sectors${totalTrades ? ' (' + totalTrades + ')' : ''}</option>`;
+    for (const s of sectors) {
+      const n = s.trades || s.tradesCount || 0;
+      const label = titleCaseSector(s.sector) + (n ? ' (' + n + ')' : '');
+      const val = s.sector.replace(/"/g, '&quot;');
+      html += `<option value="${val}"${s.sector === cur ? ' selected' : ''}>${label}</option>`;
+    }
+    sel.innerHTML = html;
+  }
+
+  // ---- Cap segmented pill ----
+  const seg = document.getElementById('capSeg');
+  if (seg) {
+    // Map trade counts by cap key so we can grey-out zero buckets.
+    const counts = {};
+    for (const m of (state.marketCapPerf || [])) {
+      counts[m.marketCap] = m.trades || m.tradesCount || 0;
+    }
+    const cur = state.marketCapFilter || '';
+    const segs = [
+      { key: '',           short: 'All', tone: 'all',   n: null },
+      { key: 'LARGE_CAP',  short: 'LG',  tone: 'large', n: counts['LARGE_CAP']  || 0 },
+      { key: 'MID_CAP',    short: 'MD',  tone: 'mid',   n: counts['MID_CAP']    || 0 },
+      { key: 'SMALL_CAP',  short: 'SM',  tone: 'small', n: counts['SMALL_CAP']  || 0 },
+    ];
+    seg.innerHTML = segs.map(s => {
+      const active = (s.key === cur);
+      const disabled = (s.key !== '' && s.n === 0 && !active);
+      const cls = 'seg ' + s.tone
+                + (active ? ' active' : '')
+                + (disabled ? ' disabled' : '');
+      const onClick = disabled ? '' :
+        (s.key === '' ? 'clearMarketCapFilter()' : `filterByMarketCap('${s.key}')`);
+      const title = s.n != null ? `${s.n} trade${s.n === 1 ? '' : 's'}` : 'All caps';
+      return `<span class="${cls}" onclick="${onClick}" title="${title}">${s.short}</span>`;
+    }).join('');
+  }
+
+  // ---- Clear-all button visibility ----
+  const clearBtn = document.getElementById('clearFiltersBtn');
+  if (clearBtn) clearBtn.hidden = !(state.sectorFilter || state.marketCapFilter);
+}
+
+// Dropdown onchange bridge — the empty option ("") means "all".
+function onSectorSelectChange(v) {
+  if (!v) { clearSectorFilter(); return; }
+  filterBySector(v);
+}
+
+function clearAllClosedFilters() {
+  state.sectorFilter = null;
+  state.marketCapFilter = null;
+  reloadClosedTradesOnly();
+  renderChips();
+  renderSectors();
+}
+
 function clearSectorFilter() {
   state.sectorFilter = null;
   reloadClosedTradesOnly();
@@ -1628,7 +2202,6 @@ document.getElementById('disableBtn').onclick = async () => {
     toast('Orders disabled — dry mode', 'ok');
   } catch (e) { toast('disable failed: ' + e.message, 'err'); }
 };
-document.getElementById('refreshBtn').onclick = () => refreshAll();
 document.querySelectorAll('#rangeStrip .range-card').forEach(el => {
   el.onclick = () => {
     document.querySelectorAll('#rangeStrip .range-card').forEach(x => x.classList.remove('active'));
@@ -1639,12 +2212,552 @@ document.querySelectorAll('#rangeStrip .range-card').forEach(el => {
   };
 });
 
-// ============================== boot + poll ==============================
-refreshAll();
-setInterval(() => {
-  if (document.visibilityState === 'visible') refreshAll();
-}, 10000);
+// ============================== Heatmap tab ==============================
+// Sector-movement view backed by /api/heatmap/*. Two modes:
+//   'sectors' — 13 NIFTY sector-index tiles (default on tab entry)
+//   'stocks'  — Nifty-500 constituents of a clicked sector
+// Auto-polls every 1 minute while the tab is active; polling is stopped
+// (and the state reset) whenever the user switches away. The backend
+// caches for the same 1 min so multiple browsers share one Kite call.
+const HM_REFRESH_MS   = 60 * 1000;
+const HM_FORCE_COOLDOWN_MS = 15 * 1000; // 1/15s client-side rate-limit
+const heatmap = {
+  mode: 'sectors',       // 'sectors' | 'stocks'
+  currentSector: null,   // when mode === 'stocks'
+  timerId: null,
+  lastForceMs: 0,
+  lastUpdated: null,     // Date of last successful load
+  updatedTickId: null,   // 30-s timer that repaints the "Updated Nm ago" label
+  active: false
+};
+
+/** Clamp % into [-3, +3] then interpolate red → grey → green. */
+function heatmapColor(pct) {
+  if (pct == null || isNaN(pct)) return null;
+  const clamped = Math.max(-3, Math.min(3, pct));
+  const NEG = [192, 57, 43];   // #c0392b at -3%
+  const MID = [ 90, 90, 90];   // #5a5a5a at  0%
+  const POS = [ 22,160,133];   // #16a085 at +3%
+  const lerp = (a, b, t) => Math.round(a + (b - a) * t);
+  let rgb;
+  if (clamped >= 0) {
+    const t = clamped / 3;
+    rgb = [lerp(MID[0], POS[0], t), lerp(MID[1], POS[1], t), lerp(MID[2], POS[2], t)];
+  } else {
+    const t = -clamped / 3;
+    rgb = [lerp(MID[0], NEG[0], t), lerp(MID[1], NEG[1], t), lerp(MID[2], NEG[2], t)];
+  }
+  return `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+}
+
+const fmtHmPct   = p => (p == null || isNaN(p)) ? '—' : (p >= 0 ? '+' : '') + p.toFixed(2) + '%';
+const fmtHmPrice = p => (p == null || isNaN(p)) ? ''  : '₹' + p.toLocaleString('en-IN', {maximumFractionDigits:2});
+
+function renderHeatmapCrumb() {
+  const crumb = document.getElementById('hmCrumb');
+  const sep   = document.getElementById('hmCrumbSep');
+  const label = document.getElementById('hmCrumbSector');
+  if (heatmap.mode === 'stocks' && heatmap.currentSector) {
+    crumb.classList.remove('at-root');
+    sep.style.display = '';
+    label.style.display = '';
+    label.textContent = heatmap.currentSector;
+  } else {
+    crumb.classList.add('at-root');
+    sep.style.display   = 'none';
+    label.style.display = 'none';
+  }
+}
+
+function renderHeatmapUpdatedLabel() {
+  const el = document.getElementById('hmUpdated');
+  if (!el) return;
+  if (!heatmap.lastUpdated) { el.textContent = '—'; return; }
+  const ageMs  = Date.now() - heatmap.lastUpdated.getTime();
+  const ageSec = Math.floor(ageMs / 1000);
+  const nextSec = Math.max(0, Math.ceil((HM_REFRESH_MS - ageMs) / 1000));
+  const hh = heatmap.lastUpdated.toLocaleTimeString('en-IN',
+    {timeZone:'Asia/Kolkata', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+  const ageTxt = ageSec >= 60 ? ` · ${Math.floor(ageSec/60)}m ago`
+                              : (ageSec > 5 ? ` · ${ageSec}s ago` : '');
+  const nextTxt = nextSec > 0 ? ` · next in ${nextSec}s` : '';
+  el.textContent = `Updated ${hh}${ageTxt}${nextTxt}`;
+}
+
+/**
+ * Squarified-treemap layout (Bruls, Huijse, van Wijk 2000).
+ *
+ * Given a container rect and a list of items sorted by `value` descending,
+ * returns an array of {item, x, y, w, h} covering the rect exactly. Items
+ * are laid out row-by-row, greedily grouping the next N items into a strip
+ * along the shorter side of the remaining rect while the strip's worst
+ * aspect ratio keeps improving; when adding one more item would make the
+ * ratio worse, the current strip is finalised and the algorithm recurses
+ * on the leftover rect. Result: rectangles are close to square-ish and
+ * ordered strictly by value — no more "big tile followed by a smaller tile
+ * that visually looks the same size" from the CSS-grid approach.
+ */
+function squarifiedTreemap(items, W, H) {
+  const total = items.reduce((a, i) => a + i.value, 0);
+  if (total <= 0 || W <= 0 || H <= 0) return [];
+  const scale = (W * H) / total;
+  // Attach `area` to a local copy so we don't mutate caller state.
+  const scaled = items.map(i => ({ ref: i, area: i.value * scale }));
+
+  const rects = [];
+
+  function worstRatio(row, side) {
+    const s = row.reduce((a, r) => a + r.area, 0);
+    let rMax = -Infinity, rMin = Infinity;
+    for (const r of row) { if (r.area > rMax) rMax = r.area; if (r.area < rMin) rMin = r.area; }
+    const s2 = s * s, side2 = side * side;
+    return Math.max((side2 * rMax) / s2, s2 / (side2 * rMin));
+  }
+
+  function placeRow(row, rect) {
+    const sum = row.reduce((a, r) => a + r.area, 0);
+    // Lay along the shorter side.
+    if (rect.w >= rect.h) {
+      // Vertical strip on the left; strip width = sum / height, items stack vertically.
+      const stripW = sum / rect.h;
+      let cy = rect.y;
+      for (const r of row) {
+        const itemH = r.area / stripW;
+        rects.push({ item: r.ref, x: rect.x, y: cy, w: stripW, h: itemH });
+        cy += itemH;
+      }
+      return { x: rect.x + stripW, y: rect.y, w: rect.w - stripW, h: rect.h };
+    } else {
+      // Horizontal strip on top; strip height = sum / width, items sit side-by-side.
+      const stripH = sum / rect.w;
+      let cx = rect.x;
+      for (const r of row) {
+        const itemW = r.area / stripH;
+        rects.push({ item: r.ref, x: cx, y: rect.y, w: itemW, h: stripH });
+        cx += itemW;
+      }
+      return { x: rect.x, y: rect.y + stripH, w: rect.w, h: rect.h - stripH };
+    }
+  }
+
+  let rect = { x: 0, y: 0, w: W, h: H };
+  let row = [];
+  let idx = 0;
+  while (idx < scaled.length) {
+    const item = scaled[idx];
+    const side = Math.min(rect.w, rect.h);
+    if (row.length === 0) {
+      row.push(item); idx++;
+    } else {
+      const w0 = worstRatio(row, side);
+      const w1 = worstRatio([...row, item], side);
+      if (w1 <= w0) { row.push(item); idx++; }
+      else          { rect = placeRow(row, rect); row = []; }
+    }
+  }
+  if (row.length) placeRow(row, rect);
+  return rects;
+}
+
+/** Choose a pct-number font size that fits comfortably inside the tile. */
+function fitFontSize(w, h) {
+  // Empirical: pct number can be up to ~55% of tile height, capped so a
+  // giant tile doesn't get an absurd 100px number. Also clamped to a
+  // legible minimum for tiny tiles.
+  const byH = h * 0.32;
+  const byW = w * 0.22;
+  const cap = 44;
+  const floor = 10;
+  return Math.max(floor, Math.min(cap, byH, byW));
+}
+
+function paintHeatmap(tiles, opts) {
+  const grid = document.getElementById('heatmapGrid');
+  if (!tiles.length) {
+    grid.innerHTML = `<div class="hm-empty">${opts.emptyMsg || 'No data.'}</div>`;
+    // Cache the current dataset so a resize can re-lay without another fetch.
+    grid._lastPaint = null;
+    return;
+  }
+  // ---- Sizing model ----
+  // Tile size scales with the SIGNED pct change (reverse number-line):
+  //   most positive → largest tile
+  //   most negative → smallest tile
+  // So +5% is bigger than +1% is bigger than 0% is bigger than -1% is
+  // bigger than -3%. This lets the user visually rank "who's winning today"
+  // vs "who's losing" at a glance, instead of "who moved the most in
+  // either direction" (which the previous |pct| model did).
+  //
+  // Since treemap cells must have positive area, we shift every pct up so
+  // the smallest one has a small positive floor:
+  //     value = (pct - minPct) + FLOOR
+  // FLOOR keeps the worst tile visible (non-zero area) rather than
+  // collapsing to nothing.
+  const FLOOR = 0.4;              // ~equivalent to 0.4% of "size credit"
+  const NA_PCT = null;            // NA tiles handled separately below
+
+  // Sort by signed pct desc; NA values go last with a small size.
+  const sorted = tiles.slice().sort((a, b) => {
+    const av = (a.pct == null || isNaN(a.pct)) ? -Infinity : a.pct;
+    const bv = (b.pct == null || isNaN(b.pct)) ? -Infinity : b.pct;
+    return bv - av;
+  });
+
+  // Compute minPct across real numbers so we can shift into positive space.
+  let minPct = Infinity;
+  for (const t of sorted) {
+    if (t.pct != null && !isNaN(t.pct) && t.pct < minPct) minPct = t.pct;
+  }
+  if (!isFinite(minPct)) minPct = 0;
+
+  const items = sorted.map(t => {
+    const isNa = (t.pct == null || isNaN(t.pct));
+    // NA gets exactly the FLOOR — so they land as the very smallest tiles
+    // at the bottom-right of the treemap.
+    const value = isNa ? FLOOR : ((t.pct - minPct) + FLOOR);
+    return { tile: t, value };
+  });
+
+  // Cache for the resize handler.
+  grid._lastPaint = { items, opts };
+
+  const rect = grid.getBoundingClientRect();
+  const W = Math.max(1, rect.width);
+  const H = Math.max(1, rect.height);
+  const layout = squarifiedTreemap(items, W, H);
+
+  const frag = document.createDocumentFragment();
+  for (const cell of layout) {
+    const t = cell.item.tile;
+    const col = heatmapColor(t.pct);
+    const div = document.createElement('div');
+    // Open == High / Open == Low tape signals — mark with a class so the
+    // CSS handles the glowing border. Tiny tolerance (0.05% of high)
+    // covers tick-rounding noise so we don't miss a genuine open-at-extreme.
+    let markerCls = '';
+    let markerTitle = '';
+    if (t.open != null && t.high != null && t.low != null && t.high > 0) {
+      const eps = t.high * 0.0005;
+      if (Math.abs(t.open - t.high) <= eps) {
+        markerCls = ' oh';
+        markerTitle = `Open = High (${fmtHmPrice(t.open)}) — bearish, sold from open`;
+      } else if (Math.abs(t.open - t.low) <= eps) {
+        markerCls = ' ol';
+        markerTitle = `Open = Low (${fmtHmPrice(t.open)}) — bullish, bought from open`;
+      }
+    }
+    div.className = 'hm-tile' + (col == null ? ' na' : '') + markerCls;
+    if (markerTitle) div.title = markerTitle;
+    if (col != null) div.style.backgroundColor = col;
+    div.style.left   = cell.x + 'px';
+    div.style.top    = cell.y + 'px';
+    div.style.width  = cell.w + 'px';
+    div.style.height = cell.h + 'px';
+
+    const pctFont   = fitFontSize(cell.w, cell.h);
+    const nameFont  = Math.max(9, Math.min(16, pctFont * 0.42));
+    const priceFont = Math.max(9, Math.min(13, pctFont * 0.32));
+
+    // Hide the price/name lines if the tile is truly tiny — a 40×40 tile
+    // can't legibly fit three lines of text.
+    const showName  = cell.h >= 40;
+    const showPrice = cell.h >= 70;
+
+    div.innerHTML =
+      (showName  ? `<div class="hm-tile-name" style="font-size:${nameFont}px">${t.name}</div>` : '') +
+      `<div class="hm-tile-pct" style="font-size:${pctFont}px">${fmtHmPct(t.pct)}</div>` +
+      (showPrice ? `<div class="hm-tile-px"  style="font-size:${priceFont}px">${fmtHmPrice(t.price)}</div>` : '');
+
+    if (col != null && opts.onClick) {
+      div.addEventListener('click', () => opts.onClick(t));
+    }
+    frag.appendChild(div);
+  }
+  grid.innerHTML = '';
+  grid.appendChild(frag);
+}
+
+// Re-lay the current heatmap when the viewport size changes so the treemap
+// keeps filling the container. Debounced to avoid thrashing during drag.
+window.addEventListener('resize', () => {
+  clearTimeout(paintHeatmap._resizeT);
+  paintHeatmap._resizeT = setTimeout(() => {
+    const grid = document.getElementById('heatmapGrid');
+    if (grid && grid._lastPaint) {
+      // Reuse the cached tiles + opts.
+      const { items, opts } = grid._lastPaint;
+      paintHeatmap(items.map(i => i.tile), opts);
+    }
+  }, 120);
+});
+
+async function loadHeatmapSectors(force = false) {
+  const grid = document.getElementById('heatmapGrid');
+  if (grid && !grid.querySelector('.hm-tile')) {
+    grid.innerHTML = '<div class="hm-loading">Loading sector movements…</div>';
+  }
+  try {
+    const data = await j('/api/heatmap/sectors' + (force ? '?force=true' : ''));
+    heatmap.lastUpdated = new Date(data.asOf || Date.now());
+    const tiles = (data.sectors || []).map(s => ({
+      name: s.name, pct: s.pctChange, price: s.lastPrice,
+      open: s.open, high: s.high, low: s.low
+    }));
+    paintHeatmap(tiles, {
+      emptyMsg: 'No sector data available (is Kite authenticated?).',
+      onClick: t => enterStocksView(t.name)
+    });
+    renderHeatmapUpdatedLabel();
+  } catch (e) {
+    document.getElementById('heatmapGrid').innerHTML =
+      `<div class="hm-empty">Failed to load sectors: ${e.message}</div>`;
+  }
+}
+
+async function loadHeatmapStocks(sectorName, force = false) {
+  const grid = document.getElementById('heatmapGrid');
+  grid.innerHTML = `<div class="hm-loading">Loading ${sectorName} constituents…</div>`;
+  try {
+    const url = '/api/heatmap/sector/' + encodeURIComponent(sectorName) + '/stocks' +
+                (force ? '?force=true' : '');
+    const data = await j(url);
+    heatmap.lastUpdated = new Date(data.asOf || Date.now());
+    const tiles = (data.stocks || []).map(s => ({
+      name: s.symbol, pct: s.pctChange, price: s.lastPrice,
+      open: s.open, high: s.high, low: s.low
+    }));
+    paintHeatmap(tiles, {
+      emptyMsg: 'No constituents mapped for this sector.',
+      onClick: t => openIntradayDrawer(t)
+    });
+    renderHeatmapUpdatedLabel();
+  } catch (e) {
+    document.getElementById('heatmapGrid').innerHTML =
+      `<div class="hm-empty">Failed to load stocks: ${e.message}</div>`;
+  }
+}
+
+function enterStocksView(sectorName) {
+  heatmap.mode = 'stocks';
+  heatmap.currentSector = sectorName;
+  renderHeatmapCrumb();
+  loadHeatmapStocks(sectorName, false);
+}
+
+function exitStocksView() {
+  heatmap.mode = 'sectors';
+  heatmap.currentSector = null;
+  renderHeatmapCrumb();
+  loadHeatmapSectors(false);
+}
+
+async function refreshHeatmap(force = false) {
+  if (heatmap.mode === 'stocks' && heatmap.currentSector) {
+    await loadHeatmapStocks(heatmap.currentSector, force);
+  } else {
+    await loadHeatmapSectors(force);
+  }
+}
+
+// ---------- Intraday candlestick renderer (used by price-drawer in intraday mode) ----------
+// Draws 5-minute OHLC candles for previous trading day + today directly to a
+// 2D canvas. We render manually rather than pull in the chartjs-financial
+// plugin — the chart is read-only, and this way it slots into the existing
+// #priceChart canvas without any Chart.js scale/dataset gymnastics.
+//
+// Layout: candles equally spaced along X; Y is priced on a linear scale
+// spanning [min(low), max(high)] with 4% padding. A dashed vertical
+// separator marks the boundary between the previous trading day and today.
+// Green = close ≥ open, red = close < open. Wick = high↔low, body = open↔close.
+function drawIntradayCandlesticks(canvas) {
+  const candles = priceState.candles;
+  if (!candles || candles.length === 0) return;
+
+  // Chart.js sets width/height attributes when it owned the canvas; wipe
+  // them so we can re-size based on the container's current CSS dimensions.
+  canvas.removeAttribute('width');
+  canvas.removeAttribute('height');
+  canvas.style.width  = '100%';
+  canvas.style.height = '100%';
+
+  const dpr = window.devicePixelRatio || 1;
+  const parent = canvas.parentElement;
+  const cssW = canvas.clientWidth  || parent.clientWidth;
+  const cssH = canvas.clientHeight || parent.clientHeight;
+  canvas.width  = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  const mLeft = 60, mRight = 14, mTop = 14, mBottom = 30;
+  const plotW = cssW - mLeft - mRight;
+  const plotH = cssH - mTop  - mBottom;
+  if (plotW <= 0 || plotH <= 0) return;
+
+  let minPx = Infinity, maxPx = -Infinity;
+  for (const c of candles) {
+    if (c.low  < minPx) minPx = c.low;
+    if (c.high > maxPx) maxPx = c.high;
+  }
+  const pad = (maxPx - minPx) * 0.04 || 1;
+  minPx -= pad; maxPx += pad;
+  const y = px => mTop + (1 - (px - minPx) / (maxPx - minPx)) * plotH;
+
+  const n = candles.length;
+  const slotW = plotW / n;
+  const bodyW = Math.max(1.5, Math.min(10, slotW * 0.7));
+
+  ctx.fillStyle = 'rgba(255,255,255,0.02)';
+  ctx.fillRect(mLeft, mTop, plotW, plotH);
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth = 1;
+  ctx.font = '11px -apple-system, sans-serif';
+  ctx.fillStyle = '#8892a6';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  const gridN = 5;
+  for (let i = 0; i <= gridN; i++) {
+    const py = mTop + (plotH * i) / gridN;
+    ctx.beginPath();
+    ctx.moveTo(mLeft, py);
+    ctx.lineTo(mLeft + plotW, py);
+    ctx.stroke();
+    const priceAt = maxPx - (i / gridN) * (maxPx - minPx);
+    ctx.fillText('₹' + priceAt.toFixed(2), mLeft - 6, py);
+  }
+
+  // Dashed vertical separator at prev-day → today boundary.
+  let boundaryIdx = -1;
+  for (let i = 1; i < n; i++) {
+    if (candles[i].date !== candles[i - 1].date) { boundaryIdx = i; break; }
+  }
+  if (boundaryIdx > 0) {
+    const bx = mLeft + boundaryIdx * slotW;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(91,157,255,0.6)';
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(bx, mTop);
+    ctx.lineTo(bx, mTop + plotH);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Candles.
+  for (let i = 0; i < n; i++) {
+    const c = candles[i];
+    const cx = mLeft + (i + 0.5) * slotW;
+    const bullish = c.close >= c.open;
+    const col = bullish ? '#3ddc84' : '#ff5c7c';
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cx, y(c.high));
+    ctx.lineTo(cx, y(c.low));
+    ctx.stroke();
+    const yo = y(c.open), yc = y(c.close);
+    const top = Math.min(yo, yc);
+    const bh  = Math.max(1, Math.abs(yc - yo));
+    ctx.fillStyle = col;
+    ctx.fillRect(cx - bodyW / 2, top, bodyW, bh);
+  }
+
+  // X-axis: date label under first bar of each date + a few intraday times.
+  ctx.fillStyle = '#8892a6';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  const uniqueDates = [];
+  for (const c of candles) if (!uniqueDates.includes(c.date)) uniqueDates.push(c.date);
+  for (const d of uniqueDates) {
+    const idx = candles.findIndex(c => c.date === d);
+    if (idx < 0) continue;
+    const cx = mLeft + (idx + 0.5) * slotW;
+    const parts = d.split('-');
+    ctx.fillText(parts[2] + '/' + parts[1], cx, mTop + plotH + 4);
+  }
+  const timeIdxs = [Math.floor(n * 0.25), Math.floor(n * 0.5), Math.floor(n * 0.75)];
+  for (const idx of timeIdxs) {
+    if (idx <= 0 || idx >= n) continue;
+    const c = candles[idx];
+    const t = new Date(c.time);
+    const hh = t.toLocaleTimeString('en-IN',
+      {timeZone:'Asia/Kolkata', hour:'2-digit', minute:'2-digit', hour12:false});
+    const cx = mLeft + (idx + 0.5) * slotW;
+    ctx.fillText(hh, cx, mTop + plotH + 16);
+  }
+}
+
+// Redraw the intraday chart on resize when the drawer is open in intraday mode.
+window.addEventListener('resize', () => {
+  if (priceState.mode !== 'intraday') return;
+  const drawer = document.getElementById('priceDrawer');
+  if (!drawer || !drawer.classList.contains('open')) return;
+  clearTimeout(drawIntradayCandlesticks._t);
+  drawIntradayCandlesticks._t = setTimeout(() => {
+    const c = document.getElementById('priceChart');
+    if (c) drawIntradayCandlesticks(c);
+  }, 120);
+});
+
+function startHeatmap() {
+  if (heatmap.active) return;
+  heatmap.active = true;
+  renderHeatmapCrumb();
+  refreshHeatmap(false);
+  heatmap.timerId       = setInterval(() => refreshHeatmap(false), HM_REFRESH_MS);
+  heatmap.updatedTickId = setInterval(renderHeatmapUpdatedLabel, 5_000);
+}
+
+function stopHeatmap() {
+  if (!heatmap.active) return;
+  heatmap.active = false;
+  if (heatmap.timerId)       { clearInterval(heatmap.timerId);       heatmap.timerId = null; }
+  if (heatmap.updatedTickId) { clearInterval(heatmap.updatedTickId); heatmap.updatedTickId = null; }
+}
+
+// Wire the crumb-root ("All sectors" link) and the manual refresh button once.
+document.addEventListener('DOMContentLoaded', () => {
+  const root = document.getElementById('hmCrumbSectors');
+  if (root) root.addEventListener('click', () => {
+    if (heatmap.mode === 'stocks') exitStocksView();
+  });
+  const btn = document.getElementById('hmRefreshBtn');
+  if (btn) btn.addEventListener('click', async () => {
+    const now = Date.now();
+    if (now - heatmap.lastForceMs < HM_FORCE_COOLDOWN_MS) {
+      toast('Please wait a few seconds between manual refreshes.', 'err');
+      return;
+    }
+    heatmap.lastForceMs = now;
+    btn.disabled = true;
+    try { await refreshHeatmap(true); }
+    finally { setTimeout(() => btn.disabled = false, 1500); }
+  });
+});
+
+function connectEventStream() {
+  const es = new EventSource('/api/pnl/events');
+  es.addEventListener('refresh', () => {
+    if (document.visibilityState === 'visible') refreshAll();
+  });
+  // 'hello' + 'ping' events are diagnostic only — no refresh needed.
+  es.addEventListener('error', () => {
+    // Browser will auto-reconnect; nothing to do. Left as a hook in case
+    // we ever want a visible "disconnected" indicator.
+  });
+  return es;
+}
+
+(async () => {
+  initTabs();             // route to the correct tab from location.hash
+  renderMarketPill();     // paint the market pill before any data arrives
+  // NIFTY %change refreshes internally every 5 min; the countdown ticks
+  // every 30 s so the "opens in / closes in" wording stays honest.
+  setInterval(renderMarketPill, 30_000);
+  await refreshAll();     // initial paint (Home data)
+  connectEventStream();   // then hand off to push
+})();
 </script>
 </body>
 </html>
-

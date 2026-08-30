@@ -5,6 +5,7 @@ import jakarta.persistence.*;
 import java.time.Instant;
 
 @Entity
+@EntityListeners(OrderRecordListener.class)
 public class OrderRecord {
 
     @Id

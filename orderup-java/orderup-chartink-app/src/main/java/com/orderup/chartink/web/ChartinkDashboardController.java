@@ -63,6 +63,7 @@ public class ChartinkDashboardController {
         return positions.kpis(r[0], r[1], STRATEGY);
     }
 
+
     @GetMapping("/open-positions")
     public List<PositionService.OpenPosition> openPositions() {
         return positions.strategyPositions(STRATEGY);
